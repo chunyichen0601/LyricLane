@@ -1,0 +1,51 @@
+name: DynLyrics
+options:
+  developmentLanguage: zh-Hant
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  DynLyrics:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+    scheme: {}
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: LyricLane
+        UILaunchScreen: {}
+        NSSupportsLiveActivities: true
+        UIBackgroundModes: [audio]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        CFBundleURLTypes:
+          - CFBundleURLName: dynlyrics
+            CFBundleURLSchemes: [dynlyrics]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.dynlyrics
+    dependencies:
+      - target: DynLyricsWidget
+  DynLyricsWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widget
+      - Shared
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: LyricLane
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.dynlyrics.widget

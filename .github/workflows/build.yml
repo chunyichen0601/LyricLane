@@ -1,0 +1,107 @@
+name: Build IPA
+
+# 每次推送程式碼：雲端編譯 → 發佈 GitHub Release → 更新 SideStore 來源
+# SideStore 來源網址：https://github.com/<你的帳號>/<repo 名稱>/releases/latest/download/source.json
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      VERSION: 1.0.${{ github.run_number }}
+      BUILD: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned, SideStore will sign it)
+        run: |
+          xcodebuild \
+            -project DynLyrics.xcodeproj \
+            -scheme DynLyrics \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            -quiet \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/DynLyrics.app Payload/
+          zip -qry DynLyrics.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DynLyrics-ipa
+          path: DynLyrics.ipa
+
+      - name: Generate SideStore source.json
+        env:
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os, datetime
+          repo, branch = os.environ["REPO"], os.environ["BRANCH"]
+          version, build = os.environ["VERSION"], os.environ["BUILD"]
+          tag = f"build-{build}"
+          source = {
+              "name": "LyricLane",
+              "identifier": "com.example.dynlyrics.source",
+              "sourceURL": f"https://github.com/{repo}/releases/latest/download/source.json",
+              "apps": [{
+                  "name": "LyricLane",
+                  "bundleIdentifier": "com.example.dynlyrics",
+                  "developerName": "Me",
+                  "subtitle": "Spotify 歌詞顯示在 CarPlay",
+                  "localizedDescription": "把 Spotify 正在播放的同步歌詞顯示在 CarPlay、動態島與鎖定畫面。",
+                  "iconURL": f"https://raw.githubusercontent.com/{repo}/{branch}/icon.png",
+                  "tintColor": "1ED760",
+                  "versions": [{
+                      "version": version,
+                      "buildVersion": build,
+                      "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                      "downloadURL": f"https://github.com/{repo}/releases/download/{tag}/DynLyrics.ipa",
+                      "size": os.path.getsize("DynLyrics.ipa"),
+                      "minOSVersion": "18.0",
+                  }],
+                  "appPermissions": {"entitlements": [], "privacy": {}},
+              }],
+              "news": [],
+          }
+          with open("source.json", "w", encoding="utf-8") as f:
+              json.dump(source, f, ensure_ascii=False, indent=2)
+          PY
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-$BUILD" DynLyrics.ipa source.json \
+            --title "LyricLane $VERSION" \
+            --notes "自動編譯 $VERSION（commit ${GITHUB_SHA::7}）" \
+            --latest
