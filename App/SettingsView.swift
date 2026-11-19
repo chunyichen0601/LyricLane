@@ -76,13 +76,20 @@ struct SettingsView: View {
                 }
             }
             Toggle("顯示下一句", isOn: $settings.carShowNext)
+            Toggle(isOn: $settings.autoLiveActivity) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("自動開啟即時動態")
+                    Text("會同時出現在動態島、鎖定畫面與 CarPlay")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             CarPreview()
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets())
         } header: {
             Text("CarPlay 顯示")
         } footer: {
-            Text("字放不下時會自動縮小，不會被切掉。預覽框大小是近似值，以實際車機為準。")
+            Text("只想在 CarPlay 看歌詞、不想佔用動態島：關閉「自動開啟即時動態」，改用 CarPlay 小工具（設定 › 一般 › CarPlay › 你的車 › 小工具）。字放不下時會自動縮小，不會被切掉。")
         }
     }
 

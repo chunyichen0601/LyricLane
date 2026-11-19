@@ -28,8 +28,15 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(useAppRemote, forKey: "useAppRemote") }
     }
 
+    /// 打開 App／連上 CarPlay 時是否自動開啟即時動態（動態島、鎖定畫面、CarPlay 即時動態）。
+    /// 預設關閉：只用 CarPlay 小工具，不會佔用動態島。
+    @Published var autoLiveActivity: Bool {
+        didSet { UserDefaults.standard.set(autoLiveActivity, forKey: "autoLiveActivity") }
+    }
+
     private init() {
         let d = UserDefaults.standard
+        autoLiveActivity = d.object(forKey: "autoLiveActivity") as? Bool ?? false
         useAppRemote = d.object(forKey: "useAppRemote") as? Bool ?? true
         clientID = d.string(forKey: "clientID") ?? ""
         offsetMs = d.object(forKey: "offsetMs") as? Double ?? 150

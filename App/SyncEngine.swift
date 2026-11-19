@@ -58,11 +58,11 @@ final class SyncEngine: ObservableObject {
 
     func appBecameActive() {
         guard auth.isLoggedIn else { return }
-        start()
+        start() // 背景同步一律開著（CarPlay 小工具靠它更新）
         if activity.isActive {
             activityRunning = true
-        } else {
-            startActivity() // 例如超過 8 小時被系統結束後，打開 App 會自動重開
+        } else if AppSettings.shared.autoLiveActivity {
+            startActivity() // 只有使用者選擇「自動開啟」才會出現在動態島
         }
     }
 
@@ -109,8 +109,9 @@ final class SyncEngine: ObservableObject {
     func startFromIntent() -> Bool {
         guard auth.isLoggedIn else { return false }
         start()
-        startActivity()
-        return activityRunning
+        if AppSettings.shared.autoLiveActivity { startActivity() }
+        publishWidget()
+        return true
     }
 
     func stopFromIntent() {

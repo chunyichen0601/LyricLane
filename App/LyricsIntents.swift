@@ -5,7 +5,7 @@ import AppIntents
 
 struct StartLyricsIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "開始顯示歌詞"
-    static var description = IntentDescription("同步 Spotify 正在播放的歌詞，顯示在 CarPlay、動態島與鎖定畫面。")
+    static var description = IntentDescription("開始同步 Spotify 歌詞，更新 CarPlay 小工具（若在設定中開啟，也會顯示即時動態）。")
     static var openAppWhenRun = false
 
     @MainActor

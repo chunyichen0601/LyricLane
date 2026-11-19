@@ -101,8 +101,8 @@ struct NowPlayingView: View {
             Button {
                 engine.activityRunning ? engine.endActivity() : engine.startActivity()
             } label: {
-                Label(engine.activityRunning ? "正在 CarPlay 與動態島顯示" : "在 CarPlay 與動態島顯示",
-                      systemImage: engine.activityRunning ? "checkmark.circle.fill" : "car.fill")
+                Label(engine.activityRunning ? "即時動態顯示中（點一下關閉）" : "開啟即時動態（動態島＋CarPlay）",
+                      systemImage: engine.activityRunning ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
