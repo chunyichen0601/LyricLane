@@ -11,6 +11,8 @@ struct PlaybackSnapshot: Equatable {
     let isPlaying: Bool
     /// 本機時間：progressMs 在這個時間點成立（已扣掉一半網路來回時間）
     let sampledAt: Date
+    /// 這次取樣的來回時間（秒），診斷用
+    var latency: Double = 0
 }
 
 enum SpotifyError: LocalizedError {
@@ -74,7 +76,7 @@ final class SpotifyClient {
         let artist = artists.isEmpty ? (item.show?.name ?? "") : artists.joined(separator: ", ")
 
         return PlaybackSnapshot(
-            trackID: item.id ?? item.uri ?? item.name,
+            trackID: item.uri ?? item.id ?? item.name, // 用 uri，跟 App Remote 一致
             title: item.name,
             artist: artist,
             primaryArtist: artists.first ?? artist,
@@ -82,7 +84,8 @@ final class SpotifyClient {
             durationMs: item.duration_ms,
             progressMs: progress,
             isPlaying: r.is_playing,
-            sampledAt: sampledAt
+            sampledAt: sampledAt,
+            latency: t1.timeIntervalSince(t0)
         )
     }
 

@@ -1,9 +1,11 @@
 import Foundation
+import WidgetKit
 
 /// 核心同步引擎：
-/// 1. 每 ~3 秒向 Spotify 取一次播放進度（只用來校正，不靠它計時）
-/// 2. 在本機用「錨點 + 經過時間」推算目前播放位置
-/// 3. 用精準計時器在「下一句歌詞的時間點」觸發，立刻更新即時動態
+/// 1. 優先用 App Remote 直接向手機上的 Spotify App 取得播放位置（本機、事件推送、幾乎零延遲）
+/// 2. 連不上時退回 Web API；因為伺服器回報的進度「只會落後、不會超前」，只接受往前的修正
+/// 3. 在本機用「錨點 + 經過時間」推算目前位置，用精準計時器在每句的時間點換句
+/// 4. 每首歌把整首時間表交給 CarPlay 小工具，讓它自己照表換句
 @MainActor
 final class SyncEngine: ObservableObject {
     @Published private(set) var track: PlaybackSnapshot?
@@ -14,8 +16,15 @@ final class SyncEngine: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var activityRunning = false
 
+    // 診斷資訊
+    @Published private(set) var syncSource = "—"
+    @Published private(set) var remoteDetail = ""
+    @Published private(set) var lastDriftMs = 0
+    @Published private(set) var latencyMs = 0
+
     private let auth: SpotifyAuth
     private let client: SpotifyClient
+    private let remote = SpotifyRemote()
     private let provider = LyricsProvider()
     private let activity = LiveActivityManager()
     private var rawLines: [LyricLine] = []
@@ -24,6 +33,7 @@ final class SyncEngine: ObservableObject {
     private var anchorProgress = 0.0
     private var anchorDate = Date()
     private var playing = false
+    private var behindStreak = 0
 
     private var pollTask: Task<Void, Never>?
     private var lyricsTask: Task<Void, Never>?
@@ -32,6 +42,11 @@ final class SyncEngine: ObservableObject {
     init(auth: SpotifyAuth) {
         self.auth = auth
         self.client = SpotifyClient(auth: auth)
+        remote.onSnapshot = { [weak self] snap in
+            self?.ingest(snap, trusted: true)
+            self?.status = snap.isPlaying ? "同步中" : "已暫停"
+        }
+        remote.onStatusChange = { [weak self] _ in self?.updateSourceLabel() }
     }
 
     func position(at date: Date = Date()) -> Double {
@@ -67,9 +82,11 @@ final class SyncEngine: ObservableObject {
         pollTask = nil
         lineTimer?.cancel()
         lineTimer = nil
+        remote.disconnect()
         KeepAlive.shared.stop()
         isRunning = false
         status = "已停止"
+        updateSourceLabel()
     }
 
     func startActivity() {
@@ -103,9 +120,10 @@ final class SyncEngine: ObservableObject {
     func settingsChanged() {
         rebuildLines()
         reschedule()
+        publishWidget()
     }
 
-    // MARK: - 輪詢 Spotify
+    // MARK: - 取得播放位置
 
     /// 回傳下次輪詢前要等幾秒
     private func pollOnce() async -> Double {
@@ -113,14 +131,26 @@ final class SyncEngine: ObservableObject {
             status = "請先登入 Spotify"
             return 3
         }
+
+        // App Remote 連著時，它會主動推送，不需要輪詢網路
+        if remote.isConnected {
+            updateSourceLabel()
+            return 5
+        }
+        await tryConnectRemote()
+
         do {
             guard let snap = try await client.currentlyPlaying() else {
                 handleIdle()
                 return 5
             }
-            apply(snap)
+            if remote.isConnected { return 5 } // 剛好連上了，以 App Remote 為準
+            ingest(snap, trusted: false)
             status = snap.isPlaying ? "同步中" : "已暫停"
+            updateSourceLabel()
             guard snap.isPlaying else { return 3 }
+            // 歌曲開頭密集取樣，快速收斂到最新的進度
+            if position() < 12 { return 1 }
             // 歌快結束時，在換歌後馬上再問一次，切歌才不會慢
             let remaining = Double(snap.durationMs - snap.progressMs) / 1000
             return max(0.5, min(3, remaining + 0.3))
@@ -133,6 +163,30 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    private func tryConnectRemote() async {
+        guard AppSettings.shared.useAppRemote, auth.hasRemoteScope,
+              let token = try? await auth.validToken() else { return }
+        remote.connect(clientID: auth.currentClientID, token: token)
+    }
+
+    private func updateSourceLabel() {
+        if remote.isConnected {
+            syncSource = "Spotify App 直連（即時）"
+            remoteDetail = ""
+        } else {
+            syncSource = isRunning ? "Web API（網路，可能落後）" : "—"
+            if !AppSettings.shared.useAppRemote {
+                remoteDetail = "已關閉直連"
+            } else if !auth.hasRemoteScope {
+                remoteDetail = "需要重新登入 Spotify 才能直連"
+            } else if case let .failed(msg) = remote.status {
+                remoteDetail = "直連失敗：\(msg)"
+            } else {
+                remoteDetail = ""
+            }
+        }
+    }
+
     private func handleIdle() {
         status = "目前沒有播放"
         if playing {
@@ -141,32 +195,62 @@ final class SyncEngine: ObservableObject {
             playing = false
         }
         reschedule()
+        publishWidget()
     }
 
-    private func apply(_ snap: PlaybackSnapshot) {
+    /// trusted = true：來自 App Remote（本機，準確）
+    /// trusted = false：來自 Web API（伺服器資料可能是舊的，只會讓進度看起來「落後」）
+    private func ingest(_ snap: PlaybackSnapshot, trusted: Bool) {
         let progress = Double(snap.progressMs) / 1000
+        latencyMs = Int((snap.latency * 1000).rounded())
 
         if snap.trackID != track?.trackID {
             track = snap
             setAnchor(progress, snap.sampledAt, snap.isPlaying)
+            behindStreak = 0
+            lastDriftMs = 0
             rawLines = []
             lines = []
             currentIndex = -1
             loadLyrics(for: snap)
             reschedule()
+            publishWidget()
             return
         }
 
         track = snap
         let drift = progress - position(at: snap.sampledAt)
-        if snap.isPlaying != playing || abs(drift) > 0.4 {
-            // 暫停、播放、拖進度條：直接重設錨點
-            setAnchor(progress, snap.sampledAt, snap.isPlaying)
-        } else if playing {
-            // 小誤差：慢慢修正，避免網路抖動造成歌詞跳動
-            anchorProgress += drift * 0.3
+        lastDriftMs = Int((drift * 1000).rounded())
+        var reanchored = false
+
+        if snap.isPlaying != playing {
+            setAnchor(progress, snap.sampledAt, snap.isPlaying) // 播放／暫停切換
+            reanchored = true
+        } else if !playing {
+            if abs(drift) > 0.05 { setAnchor(progress, snap.sampledAt, false); reanchored = true }
+        } else if trusted {
+            // App Remote 的位置是本機即時的，直接採用
+            if abs(drift) > 0.04 { setAnchor(progress, snap.sampledAt, true); reanchored = true }
+        } else if drift > 0.1 || drift < -2.0 {
+            // Web API：比我們快 → 我們之前用到的是舊資料，往前修正
+            //          慢超過 2 秒 → 使用者往回拖了進度條
+            setAnchor(progress, snap.sampledAt, true)
+            behindStreak = 0
+            reanchored = true
+        } else if drift < -0.6 {
+            // 連續 3 次明顯落後才相信（可能是網路卡頓造成真的停頓）
+            behindStreak += 1
+            if behindStreak >= 3 {
+                setAnchor(progress, snap.sampledAt, true)
+                behindStreak = 0
+                reanchored = true
+            }
+        } else {
+            behindStreak = 0 // 小幅落後：視為伺服器的舊資料，忽略
         }
+
         reschedule()
+        if reanchored { publishWidget() }
     }
 
     private func setAnchor(_ progress: Double, _ date: Date, _ isPlaying: Bool) {
@@ -188,6 +272,7 @@ final class SyncEngine: ObservableObject {
             self.lyricsStatus = result.isEmpty ? "找不到同步歌詞" : ""
             self.rebuildLines()
             self.reschedule()
+            self.publishWidget()
         }
     }
 
@@ -221,13 +306,42 @@ final class SyncEngine: ObservableObject {
 
         guard playing, idx + 1 < lines.count else { return }
         let wait = max(0.005, lines[idx + 1].time - pos)
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + wait, leeway: .milliseconds(5))
+        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
+        timer.schedule(deadline: .now() + wait, leeway: .milliseconds(2))
         timer.setEventHandler { [weak self] in
             MainActor.assumeIsolated { self?.reschedule() }
         }
         timer.resume()
         lineTimer = timer
+    }
+
+    // MARK: - 即時動態 / 小工具
+
+    /// 把整首歌的時間表交給 CarPlay 小工具（只在換歌、對時、暫停播放時呼叫）
+    private func publishWidget() {
+        let duration = Double(track?.durationMs ?? 0) / 1000
+        let message: String
+        if track == nil {
+            message = "打開 Spotify 播放音樂"
+        } else if lines.isEmpty {
+            message = lyricsStatus.isEmpty ? (track?.title ?? "") : lyricsStatus
+        } else {
+            message = ""
+        }
+        SharedStore.save(.init(
+            title: track?.title ?? "",
+            artist: track?.artist ?? "",
+            isPlaying: playing,
+            lines: lines.map { .init(time: $0.time, text: $0.text) },
+            trackStart: anchorDate.addingTimeInterval(-anchorProgress),
+            pausedPosition: position(),
+            duration: duration,
+            offset: AppSettings.shared.offsetMs / 1000,
+            carFontSize: AppSettings.shared.carFontSize,
+            carShowNext: AppSettings.shared.carShowNext,
+            message: message
+        ))
+        WidgetCenter.shared.reloadTimelines(ofKind: SharedStore.widgetKind)
     }
 
     func makeState() -> LyricsActivityAttributes.ContentState {

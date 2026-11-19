@@ -21,8 +21,17 @@ enum AuthError: LocalizedError {
 @MainActor
 final class SpotifyAuth: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
     static let redirectURI = "dynlyrics://callback"
-    private static let scopes = "user-read-currently-playing user-read-playback-state"
+    /// app-remote-control：讓 App Remote 直接跟手機上的 Spotify App 溝通（零網路延遲）
+    private static let scopes = "user-read-currently-playing user-read-playback-state app-remote-control"
     private static let refreshKey = "refresh_token"
+    private static let scopeKey = "grantedScopes"
+
+    /// 舊版登入沒有 app-remote-control 權限，需要重新登入一次
+    var hasRemoteScope: Bool {
+        (UserDefaults.standard.string(forKey: Self.scopeKey) ?? "").contains("app-remote-control")
+    }
+
+    var currentClientID: String { clientID }
 
     @Published private(set) var isLoggedIn = false
     @Published var lastError: String?
@@ -153,12 +162,14 @@ final class SpotifyAuth: NSObject, ObservableObject, ASWebAuthenticationPresenta
         let access_token: String
         let expires_in: Int
         let refresh_token: String?
+        let scope: String?
     }
 
     private func store(_ r: TokenResponse) {
         accessToken = r.access_token
         expiry = Date().addingTimeInterval(TimeInterval(r.expires_in))
         if let rt = r.refresh_token { Keychain.set(rt, for: Self.refreshKey) }
+        if let scope = r.scope { UserDefaults.standard.set(scope, forKey: Self.scopeKey) }
         isLoggedIn = true
         lastError = nil
     }

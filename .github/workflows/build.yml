@@ -25,8 +25,8 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen and ldid
+        run: brew install xcodegen ldid
 
       - name: Generate Xcode project
         run: xcodegen generate
@@ -52,6 +52,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/DynLyrics.app Payload/
+          # 寫入 App Group 權限，SideStore 才會幫 App 和小工具建立共用空間
+          ldid -SConfig/App.entitlements Payload/DynLyrics.app/PlugIns/DynLyricsWidget.appex/DynLyricsWidget
+          ldid -SConfig/App.entitlements Payload/DynLyrics.app/DynLyrics
+          ldid -e Payload/DynLyrics.app/DynLyrics
           zip -qry DynLyrics.ipa Payload
 
       - uses: actions/upload-artifact@v4

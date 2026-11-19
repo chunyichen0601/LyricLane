@@ -6,6 +6,7 @@ import WidgetKit
 struct DynLyricsWidgetBundle: WidgetBundle {
     var body: some Widget {
         LyricsLiveActivity()
+        CarLyricsWidget()
     }
 }
 

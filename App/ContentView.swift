@@ -23,6 +23,10 @@ struct ContentView: View {
         .onChange(of: settings.toTraditional) { engine.settingsChanged() }
         .onChange(of: settings.carFontSize) { engine.settingsChanged() }
         .onChange(of: settings.carShowNext) { engine.settingsChanged() }
+        .onChange(of: settings.useAppRemote) {
+            engine.stop()
+            engine.start()
+        }
         .onChange(of: auth.isLoggedIn) { _, loggedIn in
             if loggedIn { engine.appBecameActive() } else { engine.stop() }
         }
@@ -35,6 +39,19 @@ struct ContentView: View {
                 Text(engine.track?.artist ?? "").font(.subheadline).foregroundStyle(.secondary)
                 Text(engine.status).font(.caption).foregroundStyle(.secondary)
             }
+            LabeledContent("同步來源", value: engine.syncSource)
+                .font(.footnote)
+            if !engine.remoteDetail.isEmpty {
+                Text(engine.remoteDetail).font(.caption).foregroundStyle(.orange)
+            }
+            if auth.isLoggedIn && !auth.hasRemoteScope {
+                Button("重新登入 Spotify 以啟用即時直連") { auth.login() }
+            }
+            LabeledContent("上次對時誤差") {
+                Text("\(engine.lastDriftMs) ms · 來回 \(engine.latencyMs) ms")
+                    .font(.footnote.monospacedDigit())
+            }
+            .font(.footnote)
         }
     }
 
@@ -74,6 +91,7 @@ struct ContentView: View {
                 Slider(value: $settings.offsetMs, in: -1500...1500, step: 25)
             }
             Toggle("簡體轉繁體", isOn: $settings.toTraditional)
+            Toggle("直連手機上的 Spotify（最準）", isOn: $settings.useAppRemote)
         } header: {
             Text("同步調整")
         } footer: {
@@ -162,6 +180,13 @@ struct ContentView: View {
                 .font(.footnote.monospaced())
             LabeledContent("Redirect URI") {
                 Text(SpotifyAuth.redirectURI).font(.footnote.monospaced()).textSelection(.enabled)
+            }
+            LabeledContent("Bundle ID") {
+                Text(Bundle.main.bundleIdentifier ?? "—").font(.footnote.monospaced()).textSelection(.enabled)
+            }
+            LabeledContent("小工具共用空間") {
+                Text(SharedStore.isAvailable ? "正常" : "無法使用").font(.footnote)
+                    .foregroundStyle(SharedStore.isAvailable ? Color.green : Color.red)
             }
             if auth.isLoggedIn {
                 Button("登出 Spotify", role: .destructive) { auth.logout() }

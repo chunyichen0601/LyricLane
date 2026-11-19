@@ -23,8 +23,14 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(carShowNext, forKey: "carShowNext") }
     }
 
+    /// 優先用 App Remote 直連手機上的 Spotify（最準）
+    @Published var useAppRemote: Bool {
+        didSet { UserDefaults.standard.set(useAppRemote, forKey: "useAppRemote") }
+    }
+
     private init() {
         let d = UserDefaults.standard
+        useAppRemote = d.object(forKey: "useAppRemote") as? Bool ?? true
         clientID = d.string(forKey: "clientID") ?? ""
         offsetMs = d.object(forKey: "offsetMs") as? Double ?? 150
         toTraditional = d.object(forKey: "toTraditional") as? Bool ?? true
