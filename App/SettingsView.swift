@@ -59,6 +59,7 @@ struct SettingsView: View {
         return v > 0 ? "提早 \(v) ms" : "延後 \(-v) ms"
     }
 
+    @ViewBuilder
     private var carPlaySection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
@@ -197,11 +198,6 @@ struct CarPreview: View {
 
     var body: some View {
         let i = engine.currentIndex
-        let lines = engine.lines
-        func text(_ k: Int, _ fallback: String) -> String {
-            guard k >= 0, k < lines.count else { return fallback }
-            return lines[k].text.isEmpty ? "♪" : lines[k].text
-        }
         let prev = text(i - 1, "上一句歌詞")
         let line = text(i, "這是一句比較長的歌詞範例，看看會不會破圖")
         let next = text(i + 1, "下一句歌詞")
@@ -236,6 +232,12 @@ struct CarPreview: View {
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.15)))
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
+    }
+
+    private func text(_ k: Int, _ fallback: String) -> String {
+        let lines = engine.lines
+        guard k >= 0, k < lines.count else { return fallback }
+        return lines[k].text.isEmpty ? "♪" : lines[k].text
     }
 }
 
