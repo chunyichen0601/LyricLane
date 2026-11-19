@@ -84,6 +84,8 @@ struct NowPlayingView: View {
                 ResyncButton()
             }
             .padding(.top, 4)
+            ResyncBanner()
+                .animation(.spring(duration: 0.35), value: engine.resyncPhase)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24)
@@ -146,26 +148,80 @@ struct StatusPill: View {
 }
 
 /// 歌詞卡住、不同步、抓錯歌詞時按：整套同步流程重來
+/// 三段式回饋：同步中（轉圈）→ 完成 ✓（綠）／失敗 ⚠︎（橘），震動也不同
 struct ResyncButton: View {
     @EnvironmentObject private var engine: SyncEngine
     @State private var taps = 0
 
+    private var look: (icon: String, text: String, color: Color) {
+        switch engine.resyncPhase {
+        case .idle: return ("arrow.clockwise", "重新同步", .white)
+        case .working: return ("arrow.clockwise", "同步中…", .blue)
+        case .done: return ("checkmark.circle.fill", "完成", Theme.accent)
+        case .failed: return ("exclamationmark.triangle.fill", "再試一次", .orange)
+        }
+    }
+
     var body: some View {
+        let l = look
         Button {
             taps += 1
             engine.resync()
         } label: {
-            Label("重新同步", systemImage: "arrow.clockwise")
-                .font(.caption.weight(.semibold))
-                .symbolEffect(.rotate, options: .repeating, isActive: engine.isResyncing)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(.white.opacity(0.1), in: Capsule())
+            HStack(spacing: 6) {
+                Image(systemName: l.icon)
+                    .symbolEffect(.rotate, options: .repeating, isActive: engine.isResyncing)
+                    .contentTransition(.symbolEffect(.replace))
+                Text(l.text)
+                    .contentTransition(.opacity)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(l.color)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(l.color.opacity(0.15), in: Capsule())
+            .overlay(Capsule().stroke(l.color.opacity(0.3)))
+            .animation(.spring(duration: 0.35), value: engine.resyncPhase)
         }
         .buttonStyle(.plain)
         .disabled(engine.isResyncing)
         .sensoryFeedback(.impact, trigger: taps)
-        .accessibilityHint("重新連線 Spotify 並重新抓歌詞")
+        .sensoryFeedback(trigger: engine.resyncPhase) { _, new in
+            switch new {
+            case .done: return .success
+            case .failed: return .warning
+            default: return nil
+            }
+        }
+        .accessibilityLabel("重新同步")
+        .accessibilityHint("重新連線 Spotify、重新抓歌詞")
+    }
+}
+
+/// 重新同步的結果說明（完成／失敗時在標題下方出現 3 秒）
+struct ResyncBanner: View {
+    @EnvironmentObject private var engine: SyncEngine
+
+    var body: some View {
+        switch engine.resyncPhase {
+        case let .done(message):
+            banner(message, icon: "checkmark.circle.fill", color: Theme.accent)
+        case let .failed(message):
+            banner(message + "，可以再按一次", icon: "exclamationmark.triangle.fill", color: .orange)
+        case .idle, .working:
+            EmptyView()
+        }
+    }
+
+    private func banner(_ text: String, icon: String, color: Color) -> some View {
+        Label(text, systemImage: icon)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 

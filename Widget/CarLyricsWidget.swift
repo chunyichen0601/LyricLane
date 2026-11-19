@@ -88,6 +88,8 @@ struct CarLyricsProvider: TimelineProvider {
         if let np, np.isPlaying, np.duration > 0 {
             policy = .after(np.trackStart.addingTimeInterval(np.duration + 1))
         }
+        // 診斷：記下系統真的叫小工具重算的時間，App 的「進階與診斷」看得到
+        SharedStore.saveWidgetStatus(.init(lastTimelineAt: now, title: np?.title ?? "", entries: entries.count))
         completion(Timeline(entries: entries, policy: policy))
     }
 
@@ -132,15 +134,28 @@ struct CarLyricsProvider: TimelineProvider {
             return [make(now, index(at: np.pausedPosition + np.offset))]
         }
 
+        // 歌曲結束之後：不要一直停在最後一句，改顯示「等待下一首」
+        let songEnd = np.trackStart.addingTimeInterval(np.duration + 1)
+        let waiting = CarLyricsEntry(date: songEnd, previous: "", line: "♪ 等待下一首", next: "",
+                                     title: np.title, artist: np.artist, fontSize: np.carFontSize * 0.8,
+                                     offsetMs: Int((np.offset * 1000).rounded()))
+        if np.duration > 0, now >= songEnd {
+            return [CarLyricsEntry(date: now, previous: waiting.previous, line: waiting.line, next: "",
+                                   title: waiting.title, artist: waiting.artist,
+                                   fontSize: waiting.fontSize, offsetMs: waiting.offsetMs)]
+        }
+
         let pos = now.timeIntervalSince(np.trackStart) + np.offset
         let current = index(at: pos)
         var result = [make(now, current)]
         var i = current + 1
         while i < np.lines.count, result.count < limit {
             let date = np.trackStart.addingTimeInterval(np.lines[i].time - np.offset)
+            if np.duration > 0, date >= songEnd { break }
             result.append(make(date, i))
             i += 1
         }
+        if np.duration > 0 { result.append(waiting) }
         return result
     }
 }

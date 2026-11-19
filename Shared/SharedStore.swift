@@ -8,7 +8,6 @@ enum SharedStore {
     static let widgetKindInfo = "CarLyricsInfo"
     static let widgetKindAdjust = "CarLyricsAdjust"
     private static let defaultGroup = "group.com.example.dynlyrics"
-    private static let key = "nowPlaying"
 
     struct Line: Codable, Hashable {
         var time: Double
@@ -51,14 +50,38 @@ enum SharedStore {
         return defaultGroup
     }()
 
-    static var isAvailable: Bool {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) != nil
+    static var isAvailable: Bool { container != nil }
+
+    private static var container: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID)
     }
 
+    // 用「檔案」而不是 UserDefaults 交換資料：
+    // UserDefaults 跨程式（App ↔ 小工具）可能讀到快取的舊值，檔案每次讀都是最新的。
+    private static var nowPlayingURL: URL? { container?.appendingPathComponent("nowPlaying.json") }
+    private static var widgetStatusURL: URL? { container?.appendingPathComponent("widgetStatus.json") }
+
     static func save(_ value: NowPlaying) {
-        guard let d = UserDefaults(suiteName: groupID),
-              let data = try? JSONEncoder().encode(value) else { return }
-        d.set(data, forKey: key)
+        guard let url = nowPlayingURL, let data = try? JSONEncoder().encode(value) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    // MARK: - 小工具診斷：小工具每次真的被系統叫起來重算時記一筆
+
+    struct WidgetStatus: Codable {
+        var lastTimelineAt: Date
+        var title: String
+        var entries: Int
+    }
+
+    static func saveWidgetStatus(_ s: WidgetStatus) {
+        guard let url = widgetStatusURL, let data = try? JSONEncoder().encode(s) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    static func loadWidgetStatus() -> WidgetStatus? {
+        guard let url = widgetStatusURL, let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(WidgetStatus.self, from: data)
     }
 
     /// App 被關閉：小工具改顯示「已關閉」
@@ -71,7 +94,7 @@ enum SharedStore {
     }
 
     static func load() -> NowPlaying? {
-        guard let data = UserDefaults(suiteName: groupID)?.data(forKey: key) else { return nil }
+        guard let url = nowPlayingURL, let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(NowPlaying.self, from: data)
     }
 }

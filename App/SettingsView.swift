@@ -262,11 +262,19 @@ struct AdvancedView: View {
                 }
             }
 
-            Section("CarPlay 小工具") {
+            Section {
                 LabeledContent("共用空間") {
                     Text(SharedStore.isAvailable ? "正常" : "無法使用")
                         .foregroundStyle(SharedStore.isAvailable ? Theme.accent : .red)
                 }
+                LabeledContent("App 要求刷新", value: "\(engine.widgetReloads) 次")
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    widgetStatusRows
+                }
+            } header: {
+                Text("CarPlay 小工具")
+            } footer: {
+                Text("如果「小工具上的歌」跟現在播的不一樣、而且「最後重算」停在很久以前，代表 iOS 暫時不讓小工具刷新（刷新次數被系統限制）。這時改用即時動態最穩定。")
             }
 
             Section {
@@ -287,6 +295,23 @@ struct AdvancedView: View {
         }
         .navigationTitle("進階與診斷")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// 小工具自己記錄的「上次被系統叫起來重算」的時間與歌名
+    @ViewBuilder
+    private var widgetStatusRows: some View {
+        if let s = SharedStore.loadWidgetStatus() {
+            let ago = Int(Date().timeIntervalSince(s.lastTimelineAt))
+            LabeledContent("最後重算", value: ago < 60 ? "\(ago) 秒前" : "\(ago / 60) 分鐘前")
+            LabeledContent("小工具上的歌") {
+                let matches = s.title == (engine.track?.title ?? "")
+                Text(s.title.isEmpty ? "—" : s.title)
+                    .foregroundStyle(matches ? Theme.accent : .orange)
+                    .lineLimit(1)
+            }
+        } else {
+            LabeledContent("最後重算", value: "還沒有紀錄（小工具尚未加入或尚未顯示過）")
+        }
     }
 
     private func copyRow(_ title: String, _ value: String) -> some View {

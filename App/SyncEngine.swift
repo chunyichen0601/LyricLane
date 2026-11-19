@@ -19,7 +19,17 @@ final class SyncEngine: ObservableObject {
     // 診斷資訊
     @Published private(set) var syncSource = "—"
     @Published private(set) var isDirect = false
-    @Published private(set) var isResyncing = false
+    @Published private(set) var resyncPhase: ResyncPhase = .idle
+    @Published private(set) var widgetReloads = 0
+
+    enum ResyncPhase: Equatable {
+        case idle
+        case working
+        case done(String)
+        case failed(String)
+    }
+
+    var isResyncing: Bool { resyncPhase == .working }
     @Published private(set) var remoteDetail = ""
     @Published private(set) var lastDriftMs = 0
     @Published private(set) var latencyMs = 0
@@ -112,7 +122,7 @@ final class SyncEngine: ObservableObject {
         guard auth.isLoggedIn else { return false }
         start()
         if AppSettings.shared.autoLiveActivity { startActivity() }
-        publishWidget()
+        publishWidget(force: true)
         return true
     }
 
@@ -125,8 +135,8 @@ final class SyncEngine: ObservableObject {
 
     /// 重新同步：歌詞卡住、不同步、抓錯歌詞時用。整套流程重來，不只是刷新畫面。
     func resync() {
-        guard auth.isLoggedIn else { return }
-        isResyncing = true
+        guard auth.isLoggedIn, !isResyncing else { return }
+        resyncPhase = .working
         status = "重新同步中…"
         let keepActivity = activityRunning || activity.isActive
 
@@ -167,17 +177,51 @@ final class SyncEngine: ObservableObject {
             }
         }
 
-        // 最多顯示 4 秒「重新同步中」，正常情況收到第一筆狀態就會結束
+        // 正常情況：抓到歌詞（或確認沒在播放）就會結束；最多等 8 秒
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            self?.isResyncing = false
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard let self, self.isResyncing else { return }
+            if self.track == nil {
+                self.endResync(.failed("連不上 Spotify"))
+            } else {
+                self.finishResyncIfNeeded()
+            }
+        }
+    }
+
+    /// 重新同步完成：告訴使用者結果（連線方式＋歌詞狀態）
+    private func finishResyncIfNeeded() {
+        guard isResyncing else { return }
+        let via = isDirect ? "直連" : "網路"
+        if track == nil {
+            endResync(.done("已連線 · 目前沒有播放"))
+        } else if lines.isEmpty {
+            endResync(.failed("\(via) · 這首找不到歌詞"))
+        } else {
+            endResync(.done("\(via) · 歌詞已更新"))
+        }
+    }
+
+    private func endResync(_ phase: ResyncPhase) {
+        resyncPhase = phase
+        switch phase {
+        case let .done(message), let .failed(message):
+            status = message
+        case .idle, .working:
+            break
+        }
+        // 結果顯示 3 秒後收起來
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard let self, self.resyncPhase == phase else { return }
+            self.resyncPhase = .idle
         }
     }
 
     func settingsChanged() {
         rebuildLines()
         reschedule()
-        publishWidget()
+        publishWidget(force: true)
     }
 
     // MARK: - 取得播放位置
@@ -259,6 +303,7 @@ final class SyncEngine: ObservableObject {
         }
         reschedule()
         publishWidget()
+        finishResyncIfNeeded()
     }
 
     /// trusted = true：來自 App Remote（本機，準確）
@@ -266,7 +311,6 @@ final class SyncEngine: ObservableObject {
     private func ingest(_ snap: PlaybackSnapshot, trusted: Bool) {
         let progress = Double(snap.progressMs) / 1000
         latencyMs = Int((snap.latency * 1000).rounded())
-        isResyncing = false
 
         if snap.trackID != track?.trackID {
             track = snap
@@ -278,7 +322,7 @@ final class SyncEngine: ObservableObject {
             currentIndex = -1
             loadLyrics(for: snap)
             reschedule()
-            publishWidget()
+            publishWidget(after: 4) // 一首歌只刷一次：等歌詞抓到；抓不到最多等 4 秒
             return
         }
 
@@ -338,7 +382,8 @@ final class SyncEngine: ObservableObject {
             self.lyricsStatus = result.isEmpty ? "找不到同步歌詞" : ""
             self.rebuildLines()
             self.reschedule()
-            self.publishWidget()
+            self.publishWidget(after: 0.2) // 歌詞到了就刷（會取消上面那個 4 秒的）
+            self.finishResyncIfNeeded()
         }
     }
 
@@ -383,18 +428,33 @@ final class SyncEngine: ObservableObject {
 
     // MARK: - 即時動態 / 小工具
 
-    /// 把整首歌的時間表交給 CarPlay 小工具（只在換歌、對時、暫停播放時呼叫）。
-    /// 防抖 0.4 秒：連續跳歌時只送最後一首，避免小工具被反覆刷新而被系統限制。
-    private func publishWidget() {
+    /// 把整首歌的時間表交給 CarPlay 小工具。
+    ///
+    /// iOS 會限制 App 要求小工具刷新的次數，用完了系統就不理會，小工具就會卡在舊歌。
+    /// 所以這裡盡量省：
+    /// - 每首歌只刷一次（等歌詞抓到才刷）
+    /// - 連續跳歌時只刷最後停下的那首（防抖）
+    /// - 播放位置只差一點點（< 0.5 秒）的對時，不刷
+    private func publishWidget(after delay: Double = 0.4, force: Bool = false) {
         widgetTask?.cancel()
         widgetTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
-            self.writeWidgetNow()
+            self.writeWidgetNow(force: force)
         }
     }
 
-    private func writeWidgetNow() {
+    /// 上次真的送給小工具的內容摘要，用來判斷這次有沒有必要刷新
+    private struct WidgetSignature: Equatable {
+        var trackID: String?
+        var isPlaying: Bool
+        var lineCount: Int
+        var message: String
+    }
+    private var lastWidgetSignature: WidgetSignature?
+    private var lastWidgetTrackStart: Date?
+
+    private func writeWidgetNow(force: Bool) {
         let duration = Double(track?.durationMs ?? 0) / 1000
         let message: String
         if track == nil {
@@ -404,12 +464,23 @@ final class SyncEngine: ObservableObject {
         } else {
             message = ""
         }
+        let trackStart = anchorDate.addingTimeInterval(-anchorProgress)
+        let signature = WidgetSignature(trackID: track?.trackID, isPlaying: playing,
+                                        lineCount: lines.count, message: message)
+        if !force, signature == lastWidgetSignature,
+           let last = lastWidgetTrackStart, abs(last.timeIntervalSince(trackStart)) < 0.5 {
+            return // 內容沒有實質變化，不浪費刷新次數
+        }
+        lastWidgetSignature = signature
+        lastWidgetTrackStart = trackStart
+        widgetReloads += 1
+
         SharedStore.save(.init(
             title: track?.title ?? "",
             artist: track?.artist ?? "",
             isPlaying: playing,
             lines: lines.map { .init(time: $0.time, text: $0.text) },
-            trackStart: anchorDate.addingTimeInterval(-anchorProgress),
+            trackStart: trackStart,
             pausedPosition: position(),
             duration: duration,
             offset: AppSettings.shared.offsetMs / 1000,
