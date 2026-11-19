@@ -18,6 +18,7 @@ final class SyncEngine: ObservableObject {
 
     // 診斷資訊
     @Published private(set) var syncSource = "—"
+    @Published private(set) var isDirect = false
     @Published private(set) var remoteDetail = ""
     @Published private(set) var lastDriftMs = 0
     @Published private(set) var latencyMs = 0
@@ -170,6 +171,7 @@ final class SyncEngine: ObservableObject {
     }
 
     private func updateSourceLabel() {
+        isDirect = remote.isConnected
         if remote.isConnected {
             syncSource = "Spotify App 直連（即時）"
             remoteDetail = ""

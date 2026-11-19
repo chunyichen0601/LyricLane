@@ -10,8 +10,14 @@ enum ActivityError: LocalizedError {
 final class LiveActivityManager {
     typealias State = LyricsActivityAttributes.ContentState
 
+    /// 超過這個時間沒收到 App 的更新，即時動態會顯示「已停止」
+    /// （保險：App 被系統直接結束、來不及關掉即時動態時）
+    private static let staleAfter: TimeInterval = 120
+    private static let heartbeat: TimeInterval = 60
+
     private var activity: Activity<LyricsActivityAttributes>?
     private var lastState: State?
+    private var lastSent = Date.distantPast
     private var chain: Task<Void, Never>?
 
     var isActive: Bool {
@@ -30,20 +36,25 @@ final class LiveActivityManager {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw ActivityError.disabled }
         activity = try Activity.request(
             attributes: LyricsActivityAttributes(),
-            content: ActivityContent(state: state, staleDate: nil),
+            content: content(state),
             pushType: nil
         )
         lastState = state
+        lastSent = Date()
     }
 
     /// 在本機直接更新（不經過推播，所以沒有推播的次數限制與網路延遲）
     func update(_ state: State) {
-        guard let activity, activity.activityState == .active, state != lastState else { return }
+        guard let activity, activity.activityState == .active else { return }
+        // 內容沒變就不送，但每分鐘送一次心跳，延後「已停止」的時間
+        guard state != lastState || Date().timeIntervalSince(lastSent) > Self.heartbeat else { return }
         lastState = state
+        lastSent = Date()
+        let c = content(state)
         let previous = chain
         chain = Task {
             await previous?.value // 確保更新依序送出
-            await activity.update(ActivityContent(state: state, staleDate: nil))
+            await activity.update(c)
         }
     }
 
@@ -54,6 +65,22 @@ final class LiveActivityManager {
         Task {
             for a in all { await a.end(nil, dismissalPolicy: .immediate) }
         }
+    }
+
+    /// App 即將被關閉（從多工畫面滑掉）時呼叫：同步等待即時動態結束，最多等 2 秒
+    nonisolated static func endAllBeforeTermination() {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            for a in Activity<LyricsActivityAttributes>.activities {
+                await a.end(nil, dismissalPolicy: .immediate)
+            }
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + 2)
+    }
+
+    private func content(_ state: State) -> ActivityContent<State> {
+        ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter))
     }
 
     private func adoptExisting() {

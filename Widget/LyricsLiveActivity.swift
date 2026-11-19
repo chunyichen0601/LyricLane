@@ -14,7 +14,7 @@ struct LyricsLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LyricsActivityAttributes.self) { context in
             // 鎖定畫面、通知中心、CarPlay（.small）、Apple Watch 都走這裡
-            LyricsActivityView(state: context.state)
+            LyricsActivityView(state: context.state, isStale: context.isStale)
                 .activityBackgroundTint(Color.black.opacity(0.85))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -41,7 +41,8 @@ struct LyricsLiveActivity: Widget {
                 Image(systemName: context.state.isPlaying ? "music.note" : "pause.fill")
                     .foregroundStyle(.green)
             } compactTrailing: {
-                Text(context.state.line).font(.caption2).lineLimit(1).frame(maxWidth: 110)
+                Text(context.isStale ? "已停止" : context.state.line)
+                    .font(.caption2).lineLimit(1).frame(maxWidth: 110)
             } minimal: {
                 Image(systemName: "music.note").foregroundStyle(.green)
             }
@@ -54,9 +55,17 @@ struct LyricsLiveActivity: Widget {
 struct LyricsActivityView: View {
     @Environment(\.activityFamily) private var family
     let state: LyricsActivityAttributes.ContentState
+    var isStale = false
 
     var body: some View {
-        if family == .small {
+        if isStale {
+            // App 已經沒在更新（被系統關閉等），不要顯示過期的歌詞
+            Label("LyricLane 已停止", systemImage: "pause.circle")
+                .font(.headline)
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(8)
+        } else if family == .small {
             smallView
         } else {
             mediumView

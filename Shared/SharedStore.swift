@@ -59,6 +59,15 @@ enum SharedStore {
         d.set(data, forKey: key)
     }
 
+    /// App 被關閉：小工具改顯示「已關閉」
+    static func markClosed() {
+        guard var np = load() else { return }
+        np.isPlaying = false
+        np.lines = []
+        np.message = "LyricLane 已關閉"
+        save(np)
+    }
+
     static func load() -> NowPlaying? {
         guard let data = UserDefaults(suiteName: groupID)?.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(NowPlaying.self, from: data)

@@ -1,24 +1,21 @@
-import AppIntents
 import SwiftUI
 
+/// 根畫面：沒登入 → 引導畫面；登入後 → 歌詞主畫面
 struct ContentView: View {
     @EnvironmentObject private var auth: SpotifyAuth
     @EnvironmentObject private var engine: SyncEngine
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        NavigationStack {
-            Form {
-                nowPlayingSection
-                lyricsSection
-                syncSection
-                carPlaySection
-                activitySection
-                siriSection
-                spotifySection
+        Group {
+            if auth.isLoggedIn {
+                NowPlayingView()
+            } else {
+                OnboardingView()
             }
-            .navigationTitle("LyricLane")
         }
+        .preferredColorScheme(.dark)
+        .tint(Theme.accent)
         .onChange(of: settings.offsetMs) { engine.settingsChanged() }
         .onChange(of: settings.toTraditional) { engine.settingsChanged() }
         .onChange(of: settings.carFontSize) { engine.settingsChanged() }
@@ -31,173 +28,244 @@ struct ContentView: View {
             if loggedIn { engine.appBecameActive() } else { engine.stop() }
         }
     }
+}
 
-    private var nowPlayingSection: some View {
-        Section("現正播放") {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(engine.track?.title ?? "—").font(.headline)
-                Text(engine.track?.artist ?? "").font(.subheadline).foregroundStyle(.secondary)
-                Text(engine.status).font(.caption).foregroundStyle(.secondary)
+enum Theme {
+    static let accent = Color(red: 0.12, green: 0.84, blue: 0.38)
+    static let background = LinearGradient(
+        colors: [Color(red: 0.05, green: 0.06, blue: 0.08), Color(red: 0.02, green: 0.16, blue: 0.10)],
+        startPoint: .top, endPoint: .bottom
+    )
+}
+
+// MARK: - 主畫面
+
+struct NowPlayingView: View {
+    @EnvironmentObject private var auth: SpotifyAuth
+    @EnvironmentObject private var engine: SyncEngine
+    @State private var showSettings = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
+                LyricsScroller()
+                bottomBar
             }
-            LabeledContent("同步來源", value: engine.syncSource)
-                .font(.footnote)
-            if !engine.remoteDetail.isEmpty {
-                Text(engine.remoteDetail).font(.caption).foregroundStyle(.orange)
+            .background(Theme.background.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape.fill")
+                    }
+                    .accessibilityLabel("設定")
+                }
             }
-            if auth.isLoggedIn && !auth.hasRemoteScope {
-                Button("重新登入 Spotify 以啟用即時直連") { auth.login() }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
             }
-            LabeledContent("上次對時誤差") {
-                Text("\(engine.lastDriftMs) ms · 來回 \(engine.latencyMs) ms")
-                    .font(.footnote.monospacedDigit())
-            }
-            .font(.footnote)
         }
     }
 
-    private var lyricsSection: some View {
-        Section("歌詞") {
-            if engine.lines.isEmpty {
-                Text(engine.lyricsStatus.isEmpty ? "—" : engine.lyricsStatus)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(engine.track?.title ?? "LyricLane")
+                .font(.title2.bold())
+                .lineLimit(1)
+            if let artist = engine.track?.artist, !artist.isEmpty {
+                Text(artist)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
-                            ForEach(Array(engine.lines.enumerated()), id: \.offset) { i, line in
-                                Text(line.text.isEmpty ? "♪" : line.text)
-                                    .font(i == engine.currentIndex ? .title3.bold() : .body)
-                                    .foregroundStyle(i == engine.currentIndex ? Color.primary : Color.secondary)
-                                    .id(i)
-                            }
+                    .lineLimit(1)
+            }
+            StatusPill()
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 8)
+    }
+
+    private var bottomBar: some View {
+        VStack(spacing: 10) {
+            if !auth.hasRemoteScope {
+                Button { auth.login() } label: {
+                    Label("重新登入 Spotify，啟用零延遲直連", systemImage: "bolt.fill")
+                        .font(.footnote.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.orange)
+            }
+
+            Button {
+                engine.activityRunning ? engine.endActivity() : engine.startActivity()
+            } label: {
+                Label(engine.activityRunning ? "正在 CarPlay 與動態島顯示" : "在 CarPlay 與動態島顯示",
+                      systemImage: engine.activityRunning ? "checkmark.circle.fill" : "car.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(engine.activityRunning ? Theme.accent.opacity(0.35) : Theme.accent)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+    }
+}
+
+/// 一眼看懂現在的同步狀態
+struct StatusPill: View {
+    @EnvironmentObject private var engine: SyncEngine
+
+    private var info: (String, Color) {
+        if !engine.isRunning { return ("已停止", .gray) }
+        guard let track = engine.track else { return ("等待 Spotify 播放", .gray) }
+        if !track.isPlaying { return ("已暫停", .gray) }
+        return engine.isDirect ? ("同步中 · 直連", Theme.accent) : ("同步中 · 網路", .orange)
+    }
+
+    var body: some View {
+        let (text, color) = info
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(text).font(.caption.weight(.medium))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(color.opacity(0.15), in: Capsule())
+        .foregroundStyle(color == .gray ? Color.secondary : color)
+    }
+}
+
+/// Apple Music 風格的大字歌詞
+struct LyricsScroller: View {
+    @EnvironmentObject private var engine: SyncEngine
+
+    var body: some View {
+        if engine.lines.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: engine.track == nil ? "music.note" : "text.quote")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.tertiary)
+                Text(emptyMessage)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding()
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 22) {
+                        ForEach(Array(engine.lines.enumerated()), id: \.offset) { i, line in
+                            Text(line.text.isEmpty ? "♪" : line.text)
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white.opacity(opacity(for: i)))
+                                .blur(radius: i == engine.currentIndex ? 0 : 0.6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .id(i)
                         }
-                        .padding(.vertical, 8)
                     }
-                    .frame(height: 260)
-                    .onChange(of: engine.currentIndex) { _, new in
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            proxy.scrollTo(max(new, 0), anchor: .center)
-                        }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 160)
+                }
+                .scrollIndicators(.hidden)
+                .mask(LinearGradient(colors: [.clear, .black, .black, .clear],
+                                     startPoint: .top, endPoint: .bottom))
+                .onAppear { proxy.scrollTo(max(engine.currentIndex, 0), anchor: .center) }
+                .onChange(of: engine.currentIndex) { _, new in
+                    withAnimation(.spring(duration: 0.45)) {
+                        proxy.scrollTo(max(new, 0), anchor: .center)
                     }
                 }
             }
         }
     }
 
-    private var syncSection: some View {
-        Section {
-            VStack(alignment: .leading) {
-                Text("歌詞提早：\(Int(settings.offsetMs)) ms")
-                Slider(value: $settings.offsetMs, in: -1500...1500, step: 25)
-            }
-            Toggle("簡體轉繁體", isOn: $settings.toTraditional)
-            Toggle("直連手機上的 Spotify（最準）", isOn: $settings.useAppRemote)
-        } header: {
-            Text("同步調整")
-        } footer: {
-            Text("歌詞比歌聲慢就往右調，比歌聲快就往左調。車機的藍牙或無線 CarPlay 音訊本身有延遲，通常要往左調一些。")
-        }
+    private func opacity(for i: Int) -> Double {
+        if i == engine.currentIndex { return 1 }
+        return abs(i - engine.currentIndex) == 1 ? 0.45 : 0.25
     }
 
-    private var carPlaySection: some View {
-        Section {
-            VStack(alignment: .leading) {
-                Text("歌詞字級：\(Int(settings.carFontSize)) pt")
-                Slider(value: $settings.carFontSize, in: 18...36, step: 1)
+    private var emptyMessage: String {
+        if engine.track == nil { return "在 Spotify 播放音樂\n歌詞就會出現在這裡" }
+        return engine.lyricsStatus.isEmpty ? "♪" : engine.lyricsStatus
+    }
+}
+
+// MARK: - 登入引導
+
+struct OnboardingView: View {
+    @EnvironmentObject private var auth: SpotifyAuth
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 28) {
+                VStack(spacing: 12) {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 44, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 88, height: 88)
+                        .background(Theme.accent.gradient, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    Text("LyricLane").font(.largeTitle.bold())
+                    Text("Spotify 的歌詞，即時顯示在 CarPlay")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 40)
+
+                VStack(alignment: .leading, spacing: 16) {
+                    step(1, "到 Spotify 開發者後台建立 App，複製 Client ID")
+                    TextField("貼上 Client ID", text: $settings.clientID)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                        .padding(12)
+                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+
+                    step(2, "Redirect URI 要填這個")
+                    HStack {
+                        Text(SpotifyAuth.redirectURI).font(.body.monospaced())
+                        Spacer()
+                        Button("複製") { UIPasteboard.general.string = SpotifyAuth.redirectURI }
+                            .font(.footnote.weight(.semibold))
+                    }
+                    .padding(12)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .padding(20)
+                .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 20))
+
+                Button { auth.login() } label: {
+                    Text("登入 Spotify").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(settings.clientID.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                if let err = auth.lastError {
+                    Text(err).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
+                }
+
+                Link("開啟 Spotify 開發者後台", destination: URL(string: "https://developer.spotify.com/dashboard")!)
+                    .font(.footnote)
             }
-            Toggle("顯示下一句", isOn: $settings.carShowNext)
-            carPreview
-        } header: {
-            Text("CarPlay 顯示")
-        } footer: {
-            Text("字放不下時會自動縮小，不會被切掉。關閉「顯示下一句」可以讓目前這句更大。預覽框大小是近似值。")
+            .padding(24)
         }
+        .background(Theme.background.ignoresSafeArea())
     }
 
-    /// 與 CarPlay 上相同的排版規則，方便調整字級
-    private var carPreview: some View {
-        let line = engine.currentIndex >= 0 && engine.currentIndex < engine.lines.count
-            ? engine.lines[engine.currentIndex].text : "這是一句比較長的歌詞範例，看看會不會破圖"
-        let next = engine.currentIndex + 1 < engine.lines.count && engine.currentIndex + 1 >= 0
-            ? engine.lines[engine.currentIndex + 1].text : "下一句歌詞"
-        return VStack(alignment: .leading, spacing: 2) {
-            Text(line.isEmpty ? "♪" : line)
-                .font(.system(size: settings.carFontSize, weight: .heavy, design: .rounded))
-                .lineLimit(3)
-                .minimumScaleFactor(0.4)
-                .allowsTightening(true)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .layoutPriority(1)
-            if settings.carShowNext {
-                Text(next)
-                    .font(.system(size: max(11, settings.carFontSize * 0.5), weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-            }
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .frame(width: 280, height: 90)
-        .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .frame(maxWidth: .infinity)
-    }
-
-    private var siriSection: some View {
-        Section {
-            SiriTipView(intent: StartLyricsIntent())
-            ShortcutsLink()
-        } header: {
-            Text("Siri 與捷徑")
-        } footer: {
-            Text("建議在「捷徑 > 自動化」設定「連接 CarPlay 時」執行「開始顯示歌詞」，上車就自動出現歌詞，不用先打開 App。")
-        }
-    }
-
-    private var activitySection: some View {
-        Section {
-            if engine.activityRunning {
-                Button("關閉即時動態", role: .destructive) { engine.endActivity() }
-            } else {
-                Button("啟動即時動態（CarPlay／動態島）") { engine.startActivity() }
-            }
-            Button(engine.isRunning ? "停止背景同步" : "開始背景同步") {
-                engine.isRunning ? engine.stop() : engine.start()
-            }
-        } header: {
-            Text("即時動態")
-        } footer: {
-            Text("iOS 只允許 App 在前景時啟動即時動態，每次最長約 8 小時。上車前打開本 App 一次即可，之後可以切到別的 App。")
-        }
-    }
-
-    private var spotifySection: some View {
-        Section {
-            TextField("Spotify Client ID", text: $settings.clientID)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.footnote.monospaced())
-            LabeledContent("Redirect URI") {
-                Text(SpotifyAuth.redirectURI).font(.footnote.monospaced()).textSelection(.enabled)
-            }
-            LabeledContent("Bundle ID") {
-                Text(Bundle.main.bundleIdentifier ?? "—").font(.footnote.monospaced()).textSelection(.enabled)
-            }
-            LabeledContent("小工具共用空間") {
-                Text(SharedStore.isAvailable ? "正常" : "無法使用").font(.footnote)
-                    .foregroundStyle(SharedStore.isAvailable ? Color.green : Color.red)
-            }
-            if auth.isLoggedIn {
-                Button("登出 Spotify", role: .destructive) { auth.logout() }
-            } else {
-                Button("登入 Spotify") { auth.login() }
-            }
-            if let err = auth.lastError {
-                Text(err).font(.caption).foregroundStyle(.red)
-            }
-        } header: {
-            Text("Spotify 帳號")
+    private func step(_ n: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("\(n)")
+                .font(.caption.bold())
+                .frame(width: 22, height: 22)
+                .background(Theme.accent, in: Circle())
+                .foregroundStyle(.black)
+            Text(text).font(.subheadline)
         }
     }
 }
