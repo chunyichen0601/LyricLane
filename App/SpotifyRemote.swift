@@ -55,6 +55,11 @@ final class SpotifyRemote: NSObject {
         remote.connect()
     }
 
+    /// 重新同步時呼叫：取消「失敗後 10 秒內不重試」的限制
+    func resetBackoff() {
+        lastAttempt = .distantPast
+    }
+
     func disconnect() {
         refreshTimer?.invalidate()
         refreshTimer = nil

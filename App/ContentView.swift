@@ -78,8 +78,12 @@ struct NowPlayingView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            StatusPill()
-                .padding(.top, 4)
+            HStack {
+                StatusPill()
+                Spacer()
+                ResyncButton()
+            }
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24)
@@ -121,6 +125,7 @@ struct StatusPill: View {
     @EnvironmentObject private var engine: SyncEngine
 
     private var info: (String, Color) {
+        if engine.isResyncing { return ("重新同步中…", .blue) }
         if !engine.isRunning { return ("已停止", .gray) }
         guard let track = engine.track else { return ("等待 Spotify 播放", .gray) }
         if !track.isPlaying { return ("已暫停", .gray) }
@@ -137,6 +142,30 @@ struct StatusPill: View {
         .padding(.vertical, 5)
         .background(color.opacity(0.15), in: Capsule())
         .foregroundStyle(color == .gray ? Color.secondary : color)
+    }
+}
+
+/// 歌詞卡住、不同步、抓錯歌詞時按：整套同步流程重來
+struct ResyncButton: View {
+    @EnvironmentObject private var engine: SyncEngine
+    @State private var taps = 0
+
+    var body: some View {
+        Button {
+            taps += 1
+            engine.resync()
+        } label: {
+            Label("重新同步", systemImage: "arrow.clockwise")
+                .font(.caption.weight(.semibold))
+                .symbolEffect(.rotate, options: .repeating, isActive: engine.isResyncing)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(.white.opacity(0.1), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(engine.isResyncing)
+        .sensoryFeedback(.impact, trigger: taps)
+        .accessibilityHint("重新連線 Spotify 並重新抓歌詞")
     }
 }
 

@@ -19,6 +19,7 @@ final class SyncEngine: ObservableObject {
     // 診斷資訊
     @Published private(set) var syncSource = "—"
     @Published private(set) var isDirect = false
+    @Published private(set) var isResyncing = false
     @Published private(set) var remoteDetail = ""
     @Published private(set) var lastDriftMs = 0
     @Published private(set) var latencyMs = 0
@@ -122,6 +123,57 @@ final class SyncEngine: ObservableObject {
         WidgetCenter.shared.reloadAllTimelines()
     }
 
+    /// 重新同步：歌詞卡住、不同步、抓錯歌詞時用。整套流程重來，不只是刷新畫面。
+    func resync() {
+        guard auth.isLoggedIn else { return }
+        isResyncing = true
+        status = "重新同步中…"
+        let keepActivity = activityRunning || activity.isActive
+
+        // 1. 停掉所有進行中的工作
+        lyricsTask?.cancel()
+        widgetTask?.cancel()
+        lineTimer?.cancel()
+        lineTimer = nil
+        pollTask?.cancel()
+        pollTask = nil
+
+        // 2. 斷開直連，並允許立刻重連
+        remote.disconnect()
+        remote.resetBackoff()
+
+        // 3. 丟掉這首歌的歌詞快取與所有計時狀態
+        if let id = track?.trackID { provider.forget(id) }
+        track = nil
+        rawLines = []
+        lines = []
+        currentIndex = -1
+        lyricsStatus = ""
+        behindStreak = 0
+        lastDriftMs = 0
+        setAnchor(0, Date(), false)
+
+        // 4. 重建背景執行，立刻重新抓目前播放的歌（第一輪馬上執行，不用等）
+        KeepAlive.shared.restart()
+        isRunning = false
+        start()
+
+        // 5. 原本有開即時動態：關掉、等它結束、再開新的
+        if keepActivity {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.activity.endAndWait()
+                self.startActivity()
+            }
+        }
+
+        // 最多顯示 4 秒「重新同步中」，正常情況收到第一筆狀態就會結束
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            self?.isResyncing = false
+        }
+    }
+
     func settingsChanged() {
         rebuildLines()
         reschedule()
@@ -214,6 +266,7 @@ final class SyncEngine: ObservableObject {
     private func ingest(_ snap: PlaybackSnapshot, trusted: Bool) {
         let progress = Double(snap.progressMs) / 1000
         latencyMs = Int((snap.latency * 1000).rounded())
+        isResyncing = false
 
         if snap.trackID != track?.trackID {
             track = snap

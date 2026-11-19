@@ -40,7 +40,9 @@ final class KeepAlive {
         try? AVAudioSession.sharedInstance().setActive(false)
     }
 
-    private func restart() {
+    /// 重新建立背景音訊（重新同步時也會用到）
+    func restart() {
+        isRunning = true
         teardown()
         startEngine()
     }

@@ -58,6 +58,16 @@ struct CarPlayLeaveIntent: LiveActivityIntent {
 struct LyricLaneShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
+            intent: ResyncIntent(),
+            phrases: [
+                "\(.applicationName)重新同步",
+                "用\(.applicationName)重新同步歌詞",
+                "Resync \(.applicationName)",
+            ],
+            shortTitle: "重新同步歌詞",
+            systemImageName: "arrow.clockwise"
+        )
+        AppShortcut(
             intent: CarPlayArriveIntent(),
             phrases: [
                 "\(.applicationName)上車",

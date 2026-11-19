@@ -81,6 +81,13 @@ final class LyricsProvider {
         let syncedLyrics: String?
     }
 
+    /// 忘掉某首歌的歌詞（記憶體＋磁碟），下次重新抓
+    func forget(_ key: String) {
+        memory.removeValue(forKey: key)
+        let safe = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "x"
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent(safe + ".json"))
+    }
+
     /// 找不到時回傳空陣列
     func lyrics(for s: PlaybackSnapshot) async -> [LyricLine] {
         let key = s.trackID

@@ -74,6 +74,15 @@ final class LiveActivityManager {
         }
     }
 
+    /// 關掉所有即時動態並等它們真的結束（重新同步時，關完才開新的）
+    func endAndWait() async {
+        let all = Activity<LyricsActivityAttributes>.activities
+        activity = nil
+        lastState = nil
+        pending = nil
+        for a in all { await a.end(nil, dismissalPolicy: .immediate) }
+    }
+
     /// App 即將被關閉（從多工畫面滑掉）時呼叫：同步等待即時動態結束，最多等 2 秒
     nonisolated static func endAllBeforeTermination() {
         let done = DispatchSemaphore(value: 0)

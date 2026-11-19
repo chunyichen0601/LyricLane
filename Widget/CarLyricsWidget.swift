@@ -225,6 +225,10 @@ struct CarLyricsView: View {
                 Image(systemName: "hare.fill")
                     .frame(maxWidth: .infinity, minHeight: 26)
             }
+            Button(intent: ResyncIntent()) {
+                Image(systemName: "arrow.clockwise")
+                    .frame(maxWidth: .infinity, minHeight: 26)
+            }
         }
         .buttonStyle(.plain)
         .font(.system(size: 13))
