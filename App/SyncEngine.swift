@@ -38,6 +38,7 @@ final class SyncEngine: ObservableObject {
 
     private var pollTask: Task<Void, Never>?
     private var lyricsTask: Task<Void, Never>?
+    private var widgetTask: Task<Void, Never>?
     private var lineTimer: DispatchSourceTimer?
 
     init(auth: SpotifyAuth) {
@@ -138,8 +139,13 @@ final class SyncEngine: ObservableObject {
 
         // App Remote 連著時，它會主動推送，不需要輪詢網路
         if remote.isConnected {
-            updateSourceLabel()
-            return 5
+            if remote.isHealthy {
+                updateSourceLabel()
+                return 5
+            }
+            // 連著但 15 秒沒收到任何狀態（例如連續跳歌後 Spotify 那邊卡住）：
+            // 自動斷開，這一輪先改用網路模式，下一輪再重新直連——不用使用者手動重開 App
+            remote.disconnect()
         }
         await tryConnectRemote()
 
@@ -270,7 +276,9 @@ final class SyncEngine: ObservableObject {
         lyricsTask?.cancel()
         lyricsStatus = "載入歌詞中…"
         lyricsTask = Task { [weak self] in
-            guard let self else { return }
+            // 防抖：停在同一首 0.35 秒才開始抓歌詞；連續跳歌時中間的歌都不會送出請求
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard let self, !Task.isCancelled else { return }
             let result = await self.provider.lyrics(for: snap)
             guard !Task.isCancelled, self.track?.trackID == snap.trackID else { return }
             self.rawLines = result
@@ -322,8 +330,18 @@ final class SyncEngine: ObservableObject {
 
     // MARK: - 即時動態 / 小工具
 
-    /// 把整首歌的時間表交給 CarPlay 小工具（只在換歌、對時、暫停播放時呼叫）
+    /// 把整首歌的時間表交給 CarPlay 小工具（只在換歌、對時、暫停播放時呼叫）。
+    /// 防抖 0.4 秒：連續跳歌時只送最後一首，避免小工具被反覆刷新而被系統限制。
     private func publishWidget() {
+        widgetTask?.cancel()
+        widgetTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.writeWidgetNow()
+        }
+    }
+
+    private func writeWidgetNow() {
         let duration = Double(track?.durationMs ?? 0) / 1000
         let message: String
         if track == nil {

@@ -95,9 +95,12 @@ final class LyricsProvider {
         }
 
         let lines = await fetch(title: s.title, artist: s.primaryArtist, album: s.album, durationMs: s.durationMs)
-        memory[key] = lines
-        if !lines.isEmpty, let d = try? JSONEncoder().encode(lines) {
-            try? d.write(to: file)
+        // 跳歌時被取消的請求不能記成「找不到」，否則切回這首歌會一直沒有歌詞
+        guard !Task.isCancelled else { return [] }
+        // 只快取找到的歌詞；找不到（可能只是網路不穩）下次再試
+        if !lines.isEmpty {
+            memory[key] = lines
+            if let d = try? JSONEncoder().encode(lines) { try? d.write(to: file) }
         }
         return lines
     }
@@ -125,6 +128,7 @@ final class LyricsProvider {
             [("q", cleaned)],
         ]
         for q in queries {
+            if Task.isCancelled { return [] } // 已經跳到下一首，別再浪費請求
             guard let results: [Record] = await get("api/search", q) else { continue }
             let best = results
                 .filter { !($0.syncedLyrics ?? "").isEmpty }

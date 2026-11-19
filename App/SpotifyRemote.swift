@@ -23,8 +23,25 @@ final class SpotifyRemote: NSObject {
 
     var isConnected: Bool { appRemote?.isConnected == true }
 
+    /// 最後一次收到 Spotify 狀態的時間（用來判斷直連是否「連著但卡住」）
+    private(set) var lastEventAt = Date.distantPast
+    /// 最後一次收到 Spotify「主動推送」事件的時間
+    private var lastPushAt = Date.distantPast
+
+    /// 連著，而且最近 15 秒內有收到狀態（每 5 秒會主動問一次）
+    var isHealthy: Bool {
+        isConnected && Date().timeIntervalSince(lastEventAt) < 15
+    }
+
     func connect(clientID: String, token: String) {
-        guard !isConnected, status != .connecting else { return }
+        guard !isConnected else { return }
+        // 卡在「連線中」超過 15 秒：視為失敗，丟掉重來（避免永遠等下去）
+        if status == .connecting {
+            guard Date().timeIntervalSince(lastAttempt) > 15 else { return }
+            appRemote?.delegate = nil
+            appRemote?.disconnect()
+            setStatus(.failed("連線逾時"))
+        }
         // 失敗後至少隔 10 秒再試，避免一直重連
         guard Date().timeIntervalSince(lastAttempt) > 10 else { return }
         lastAttempt = Date()
@@ -57,11 +74,16 @@ final class SpotifyRemote: NSObject {
             let t1 = Date()
             guard let state = result as? SPTAppRemotePlayerState else { return }
             let mid = t0.addingTimeInterval(t1.timeIntervalSince(t0) / 2)
-            Task { @MainActor in self?.emit(state, at: mid, latency: t1.timeIntervalSince(t0)) }
+            Task { @MainActor in
+                // 送出詢問後又收到了新的事件（例如剛好跳歌）→ 這個回應已經過期，丟掉
+                guard let self, self.lastPushAt < t0 else { return }
+                self.emit(state, at: mid, latency: t1.timeIntervalSince(t0))
+            }
         }
     }
 
     private func emit(_ s: SPTAppRemotePlayerState, at date: Date, latency: Double) {
+        lastEventAt = Date()
         let track = s.track
         let snap = PlaybackSnapshot(
             trackID: track.uri,
@@ -79,6 +101,7 @@ final class SpotifyRemote: NSObject {
     }
 
     fileprivate func didConnect(_ remote: SPTAppRemote) {
+        lastEventAt = Date() // 給第一次狀態回來的緩衝時間
         setStatus(.connected)
         remote.playerAPI?.delegate = self
         remote.playerAPI?.subscribe(toPlayerState: { _, _ in })
@@ -114,6 +137,9 @@ extension SpotifyRemote: SPTAppRemoteDelegate, SPTAppRemotePlayerStateDelegate {
 
     nonisolated func playerStateDidChange(_ playerState: SPTAppRemotePlayerState) {
         let now = Date() // 事件到達的瞬間就記時間，避免排隊造成誤差
-        Task { @MainActor in self.emit(playerState, at: now, latency: 0) }
+        Task { @MainActor in
+            self.lastPushAt = now
+            self.emit(playerState, at: now, latency: 0)
+        }
     }
 }

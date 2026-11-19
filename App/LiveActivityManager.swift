@@ -18,7 +18,8 @@ final class LiveActivityManager {
     private var activity: Activity<LyricsActivityAttributes>?
     private var lastState: State?
     private var lastSent = Date.distantPast
-    private var chain: Task<Void, Never>?
+    private var pending: State?
+    private var sending = false
 
     var isActive: Bool {
         adoptExisting()
@@ -50,11 +51,17 @@ final class LiveActivityManager {
         guard state != lastState || Date().timeIntervalSince(lastSent) > Self.heartbeat else { return }
         lastState = state
         lastSent = Date()
-        let c = content(state)
-        let previous = chain
-        chain = Task {
-            await previous?.value // 確保更新依序送出
-            await activity.update(c)
+        // 「只送最新的」：上一個更新還在送時，新的狀態先放著；送完後只補送最後一個。
+        // 連續跳歌時不會排出一長串過期的更新，畫面也不會落後好幾首歌。
+        pending = state
+        guard !sending else { return }
+        sending = true
+        Task { [weak self] in
+            while let me = self, let next = me.pending {
+                me.pending = nil
+                await activity.update(me.content(next))
+            }
+            self?.sending = false
         }
     }
 
