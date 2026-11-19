@@ -40,7 +40,7 @@ struct CarLyricsInfoWidget: Widget {
     var body: some WidgetConfiguration {
         makeConfiguration(kind: SharedStore.widgetKindInfo, style: .info,
                           name: "LyricLane 歌詞＋歌曲",
-                          description: "歌詞，底部顯示歌名與歌手。")
+                          description: "歌詞，底部顯示歌名、歌手和 ↻ 重新同步按鈕。")
     }
 }
 
@@ -220,6 +220,16 @@ struct CarLyricsView: View {
                 .foregroundStyle(.white.opacity(0.65))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            // ↻ 重新同步（交給主 App 執行）
+            Button(intent: ResyncIntent()) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 24)
+                    .background(.white.opacity(0.15), in: Capsule())
+            }
+            .buttonStyle(.plain)
         }
         .padding(.top, 2)
     }
