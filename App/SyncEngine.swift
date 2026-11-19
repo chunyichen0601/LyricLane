@@ -118,7 +118,7 @@ final class SyncEngine: ObservableObject {
         endActivity()
         stop()
         SharedStore.markClosed()
-        WidgetCenter.shared.reloadTimelines(ofKind: SharedStore.widgetKind)
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     func settingsChanged() {
@@ -344,10 +344,9 @@ final class SyncEngine: ObservableObject {
             offset: AppSettings.shared.offsetMs / 1000,
             carFontSize: AppSettings.shared.carFontSize,
             carShowNext: AppSettings.shared.carShowNext,
-            message: message,
-            showAdjustButtons: AppSettings.shared.widgetAdjustButtons
+            message: message
         ))
-        WidgetCenter.shared.reloadTimelines(ofKind: SharedStore.widgetKind)
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     func makeState() -> LyricsActivityAttributes.ContentState {

@@ -75,7 +75,20 @@ struct SettingsView: View {
                     Image(systemName: "textformat.size.larger")
                 }
             }
-            Toggle("顯示下一句", isOn: $settings.carShowNext)
+            CarPreview()
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+        } header: {
+            Text("CarPlay 小工具")
+        } footer: {
+            Text("""
+            有三種樣式可以挑：「歌詞」「歌詞＋歌曲」「歌詞＋快慢」。\
+            到 iPhone 設定 › 一般 › CarPlay › 你的車 › 小工具 加入你要的那一個。\
+            字放不下時會自動縮小，不會被切掉。預覽是近似大小，以實際車機為準。
+            """)
+        }
+
+        Section {
             Toggle(isOn: $settings.autoLiveActivity) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("自動開啟即時動態")
@@ -83,20 +96,11 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Toggle(isOn: $settings.widgetAdjustButtons) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("小工具顯示 🐢／🐇 微調按鈕")
-                    Text("在 CarPlay 小工具上直接調歌詞快慢，歌詞字會小一點")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            CarPreview()
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
+            Toggle("即時動態顯示下一句", isOn: $settings.carShowNext)
         } header: {
-            Text("CarPlay 顯示")
+            Text("即時動態")
         } footer: {
-            Text("只想在 CarPlay 看歌詞、不想佔用動態島：關閉「自動開啟即時動態」，改用 CarPlay 小工具（設定 › 一般 › CarPlay › 你的車 › 小工具）。字放不下時會自動縮小，不會被切掉。")
+            Text("不想佔用動態島就關閉「自動開啟」，只用 CarPlay 小工具即可。")
         }
     }
 
@@ -194,31 +198,42 @@ struct CarPreview: View {
     var body: some View {
         let i = engine.currentIndex
         let lines = engine.lines
-        let line = (i >= 0 && i < lines.count) ? lines[i].text : "這是一句比較長的歌詞範例，看看會不會破圖"
-        let next = (i + 1 >= 0 && i + 1 < lines.count) ? lines[i + 1].text : "下一句歌詞"
+        func text(_ k: Int, _ fallback: String) -> String {
+            guard k >= 0, k < lines.count else { return fallback }
+            return lines[k].text.isEmpty ? "♪" : lines[k].text
+        }
+        let prev = text(i - 1, "上一句歌詞")
+        let line = text(i, "這是一句比較長的歌詞範例，看看會不會破圖")
+        let next = text(i + 1, "下一句歌詞")
+        let side = max(11, settings.carFontSize * 0.5)
 
-        VStack(alignment: .leading, spacing: 2) {
-            Text(line.isEmpty ? "♪" : line)
+        // 與 CarPlay 小工具相同的排版：上下句小字霧化、本句大字清晰
+        VStack(alignment: .leading, spacing: 3) {
+            Text(prev)
+                .font(.system(size: side, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.4))
+                .blur(radius: 1.2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(line)
                 .font(.system(size: settings.carFontSize, weight: .heavy, design: .rounded))
                 .lineLimit(3)
                 .minimumScaleFactor(0.4)
                 .allowsTightening(true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .layoutPriority(1)
-            if settings.carShowNext {
-                Text(next)
-                    .font(.system(size: max(11, settings.carFontSize * 0.5), weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-            }
+            Text(next)
+                .font(.system(size: side, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.4))
+                .blur(radius: 1.2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(width: 280, height: 90)
-        .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.15)))
+        .padding(10)
+        .frame(width: 170, height: 170) // CarPlay 小工具是正方形
+        .background(Color.black, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.15)))
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
     }

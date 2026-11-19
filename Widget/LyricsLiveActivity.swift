@@ -7,6 +7,8 @@ struct DynLyricsWidgetBundle: WidgetBundle {
     var body: some Widget {
         LyricsLiveActivity()
         CarLyricsWidget()
+        CarLyricsInfoWidget()
+        CarLyricsAdjustWidget()
     }
 }
 

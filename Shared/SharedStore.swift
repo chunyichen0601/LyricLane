@@ -5,6 +5,8 @@ import Foundation
 /// 不需要 App 每句都去更新，所以不會有更新延遲或次數限制。
 enum SharedStore {
     static let widgetKind = "CarLyrics"
+    static let widgetKindInfo = "CarLyricsInfo"
+    static let widgetKindAdjust = "CarLyricsAdjust"
     private static let defaultGroup = "group.com.example.dynlyrics"
     private static let key = "nowPlaying"
 
@@ -29,8 +31,6 @@ enum SharedStore {
         var carShowNext: Bool
         /// 沒有歌詞時要顯示的文字
         var message: String
-        /// 小工具上是否顯示 🐢／🐇 微調按鈕（舊資料沒有這欄，所以是 Optional）
-        var showAdjustButtons: Bool?
     }
 
     /// SideStore／AltStore 用免費帳號簽名時會改掉 App Group 名稱，

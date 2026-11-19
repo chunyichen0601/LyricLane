@@ -1,39 +1,81 @@
 import SwiftUI
 import WidgetKit
 
-/// CarPlay 小工具頁（iOS 26）與 iPhone 主畫面的小型小工具。
-/// App 每首歌只交一次「整首歌時間表」，這裡把每一句排成一個 timeline entry，
-/// 由系統在每句的時間點自動切換，不需要 App 一直更新。
+// CarPlay 小工具頁（iOS 26）與 iPhone 主畫面的小工具。
+// iOS 的 CarPlay 只支援 systemSmall 尺寸，所以這裡把一格空間盡量給歌詞用。
+//
+// App 每首歌只交一次「整首歌時間表」，這裡把每一句排成一個 timeline entry，
+// 由系統在每句的時間點自動切換，不需要 App 一直更新。
+//
+// 三種樣式各是一個獨立的小工具，在「設定 › CarPlay › 小工具」裡挑：
+//   LyricLane 歌詞        純歌詞（上一句／本句／下一句）
+//   LyricLane 歌詞＋歌曲  底部顯示歌名與歌手
+//   LyricLane 歌詞＋快慢  底部有 🐢／🐇 微調按鈕
+
+enum CarLyricsStyle {
+    case pure, info, adjust
+}
+
+private func makeConfiguration(kind: String, style: CarLyricsStyle,
+                               name: LocalizedStringKey, description: LocalizedStringKey) -> some WidgetConfiguration {
+    StaticConfiguration(kind: kind, provider: CarLyricsProvider()) { entry in
+        CarLyricsView(entry: entry, style: style)
+            .containerBackground(for: .widget) { Color.black }
+    }
+    .configurationDisplayName(name)
+    .description(description)
+    .supportedFamilies([.systemSmall])
+    .contentMarginsDisabled()
+}
+
 struct CarLyricsWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: SharedStore.widgetKind, provider: CarLyricsProvider()) { entry in
-            CarLyricsView(entry: entry)
-                .containerBackground(for: .widget) { Color.black }
-        }
-        .configurationDisplayName("LyricLane 歌詞")
-        .description("顯示 Spotify 正在播放的同步歌詞，也可以放在 CarPlay 小工具頁。")
-        .supportedFamilies([.systemSmall])
-        .contentMarginsDisabled()
+        makeConfiguration(kind: SharedStore.widgetKind, style: .pure,
+                          name: "LyricLane 歌詞",
+                          description: "純歌詞：上一句、本句、下一句。")
     }
 }
 
+struct CarLyricsInfoWidget: Widget {
+    var body: some WidgetConfiguration {
+        makeConfiguration(kind: SharedStore.widgetKindInfo, style: .info,
+                          name: "LyricLane 歌詞＋歌曲",
+                          description: "歌詞，底部顯示歌名與歌手。")
+    }
+}
+
+struct CarLyricsAdjustWidget: Widget {
+    var body: some WidgetConfiguration {
+        makeConfiguration(kind: SharedStore.widgetKindAdjust, style: .adjust,
+                          name: "LyricLane 歌詞＋快慢",
+                          description: "歌詞，底部有 🐢／🐇 按鈕可以微調歌詞快慢。")
+    }
+}
+
+// MARK: - Timeline
+
 struct CarLyricsEntry: TimelineEntry {
     let date: Date
+    var previous = ""
     let line: String
     let next: String
+    var title = ""
+    var artist = ""
     let fontSize: Double
-    let showNext: Bool
-    let isPlaying: Bool
-    var showButtons = false
     var offsetMs = 0
 }
 
 struct CarLyricsProvider: TimelineProvider {
     func placeholder(in context: Context) -> CarLyricsEntry {
-        CarLyricsEntry(date: Date(), line: "♪ LyricLane", next: "", fontSize: 26, showNext: false, isPlaying: false)
+        CarLyricsEntry(date: Date(), previous: "上一句歌詞", line: "♪ LyricLane", next: "下一句歌詞",
+                       title: "歌名", artist: "歌手", fontSize: 26)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (CarLyricsEntry) -> Void) {
+        if context.isPreview, SharedStore.load() == nil {
+            completion(placeholder(in: context))
+            return
+        }
         completion(Self.entries(from: SharedStore.load(), now: Date(), limit: 1).first ?? placeholder(in: context))
     }
 
@@ -52,25 +94,32 @@ struct CarLyricsProvider: TimelineProvider {
     static func entries(from np: SharedStore.NowPlaying?, now: Date, limit: Int) -> [CarLyricsEntry] {
         guard let np else {
             let msg = SharedStore.isAvailable ? "打開 LyricLane" : "請用 SideStore 重新安裝 LyricLane"
-            return [CarLyricsEntry(date: now, line: msg, next: "", fontSize: 22, showNext: false, isPlaying: false)]
+            return [CarLyricsEntry(date: now, line: msg, next: "", fontSize: 22)]
+        }
+
+        func text(_ i: Int) -> String {
+            guard i >= 0, i < np.lines.count else { return "" }
+            let t = np.lines[i].text
+            return t.isEmpty ? "♪" : t
         }
 
         func make(_ date: Date, _ idx: Int) -> CarLyricsEntry {
             var line: String
+            var prev = ""
             var next = ""
             if np.lines.isEmpty {
                 line = np.message.isEmpty ? np.title : np.message
             } else if idx < 0 {
-                line = "♪ " + np.title
-                next = np.lines[0].text
+                line = "♪"
+                next = text(0)
             } else {
-                line = np.lines[idx].text
-                if idx + 1 < np.lines.count { next = np.lines[idx + 1].text }
+                prev = text(idx - 1)
+                line = text(idx)
+                next = text(idx + 1)
             }
-            if line.isEmpty { line = "♪" }
-            return CarLyricsEntry(date: date, line: line, next: next,
-                                  fontSize: np.carFontSize, showNext: np.carShowNext, isPlaying: np.isPlaying,
-                                  showButtons: np.showAdjustButtons ?? false,
+            return CarLyricsEntry(date: date, previous: prev, line: line, next: next,
+                                  title: np.title, artist: np.artist,
+                                  fontSize: np.carFontSize,
                                   offsetMs: Int((np.offset * 1000).rounded()))
         }
 
@@ -96,33 +145,68 @@ struct CarLyricsProvider: TimelineProvider {
     }
 }
 
+// MARK: - 畫面
+
 struct CarLyricsView: View {
     let entry: CarLyricsEntry
+    let style: CarLyricsStyle
+
+    /// 上下兩句：比本句小、半透明、霧化
+    private var sideSize: Double { max(11, entry.fontSize * 0.5) }
 
     var body: some View {
-        // 與即時動態相同的「不破圖」規則：放不下就縮小，不截斷
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
+            side(entry.previous)
+
+            // 本句：清晰、最大；放不下就自動縮小，不截斷
             Text(entry.line)
                 .font(.system(size: entry.fontSize, weight: .heavy, design: .rounded))
-                .lineLimit(4)
+                .foregroundStyle(.white)
+                .lineLimit(3)
                 .minimumScaleFactor(0.4)
                 .allowsTightening(true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .layoutPriority(1)
-            if entry.showNext && !entry.next.isEmpty {
-                Text(entry.next)
-                    .font(.system(size: max(11, entry.fontSize * 0.5), weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-            }
-            if entry.showButtons {
+
+            side(entry.next)
+
+            switch style {
+            case .pure:
+                EmptyView()
+            case .info:
+                infoBar
+            case .adjust:
                 adjustBar
             }
         }
-        .foregroundStyle(.white)
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func side(_ text: String) -> some View {
+        // 沒有上一句／下一句時也保留位置，本句才不會上下跳動
+        Text(text.isEmpty ? " " : text)
+            .font(.system(size: sideSize, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.4))
+            .blur(radius: 1.2)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var infoBar: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "music.note")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color(red: 0.12, green: 0.84, blue: 0.38))
+            Text(entry.artist.isEmpty ? entry.title : "\(entry.title) · \(entry.artist)")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.65))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(.top, 2)
     }
 
     /// 🐢 延後 / 目前值 / 🐇 提早（按鈕交給主 App 執行，立刻生效）
@@ -136,7 +220,6 @@ struct CarLyricsView: View {
                 .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white.opacity(0.7))
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
                 .fixedSize()
             Button(intent: AdjustOffsetIntent(delta: 100)) {
                 Image(systemName: "hare.fill")

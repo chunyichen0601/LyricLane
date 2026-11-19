@@ -20,7 +20,6 @@ struct ContentView: View {
         .onChange(of: settings.toTraditional) { engine.settingsChanged() }
         .onChange(of: settings.carFontSize) { engine.settingsChanged() }
         .onChange(of: settings.carShowNext) { engine.settingsChanged() }
-        .onChange(of: settings.widgetAdjustButtons) { engine.settingsChanged() }
         .onChange(of: settings.useAppRemote) {
             engine.stop()
             engine.start()

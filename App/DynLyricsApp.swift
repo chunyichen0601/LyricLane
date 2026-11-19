@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func applicationWillTerminate(_ application: UIApplication) {
         LiveActivityManager.endAllBeforeTermination()
         SharedStore.markClosed()
-        WidgetCenter.shared.reloadTimelines(ofKind: SharedStore.widgetKind)
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }
 

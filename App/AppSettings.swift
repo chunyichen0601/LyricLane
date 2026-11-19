@@ -34,14 +34,9 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(autoLiveActivity, forKey: "autoLiveActivity") }
     }
 
-    /// CarPlay／主畫面小工具底部顯示 🐢／🐇 微調按鈕（會讓歌詞字變小一點）
-    @Published var widgetAdjustButtons: Bool {
-        didSet { UserDefaults.standard.set(widgetAdjustButtons, forKey: "widgetAdjustButtons") }
-    }
 
     private init() {
         let d = UserDefaults.standard
-        widgetAdjustButtons = d.object(forKey: "widgetAdjustButtons") as? Bool ?? false
         autoLiveActivity = d.object(forKey: "autoLiveActivity") as? Bool ?? false
         useAppRemote = d.object(forKey: "useAppRemote") as? Bool ?? true
         clientID = d.string(forKey: "clientID") ?? ""
