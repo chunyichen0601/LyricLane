@@ -117,6 +117,8 @@ final class SyncEngine: ObservableObject {
     func stopFromIntent() {
         endActivity()
         stop()
+        SharedStore.markClosed()
+        WidgetCenter.shared.reloadTimelines(ofKind: SharedStore.widgetKind)
     }
 
     func settingsChanged() {
@@ -342,7 +344,8 @@ final class SyncEngine: ObservableObject {
             offset: AppSettings.shared.offsetMs / 1000,
             carFontSize: AppSettings.shared.carFontSize,
             carShowNext: AppSettings.shared.carShowNext,
-            message: message
+            message: message,
+            showAdjustButtons: AppSettings.shared.widgetAdjustButtons
         ))
         WidgetCenter.shared.reloadTimelines(ofKind: SharedStore.widgetKind)
     }

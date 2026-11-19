@@ -24,6 +24,8 @@ struct CarLyricsEntry: TimelineEntry {
     let fontSize: Double
     let showNext: Bool
     let isPlaying: Bool
+    var showButtons = false
+    var offsetMs = 0
 }
 
 struct CarLyricsProvider: TimelineProvider {
@@ -67,7 +69,9 @@ struct CarLyricsProvider: TimelineProvider {
             }
             if line.isEmpty { line = "♪" }
             return CarLyricsEntry(date: date, line: line, next: next,
-                                  fontSize: np.carFontSize, showNext: np.carShowNext, isPlaying: np.isPlaying)
+                                  fontSize: np.carFontSize, showNext: np.carShowNext, isPlaying: np.isPlaying,
+                                  showButtons: np.showAdjustButtons ?? false,
+                                  offsetMs: Int((np.offset * 1000).rounded()))
         }
 
         func index(at pos: Double) -> Int {
@@ -112,9 +116,37 @@ struct CarLyricsView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             }
+            if entry.showButtons {
+                adjustBar
+            }
         }
         .foregroundStyle(.white)
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    /// 🐢 延後 / 目前值 / 🐇 提早（按鈕交給主 App 執行，立刻生效）
+    private var adjustBar: some View {
+        HStack(spacing: 6) {
+            Button(intent: AdjustOffsetIntent(delta: -100)) {
+                Image(systemName: "tortoise.fill")
+                    .frame(maxWidth: .infinity, minHeight: 26)
+            }
+            Text(entry.offsetMs == 0 ? "0" : String(format: "%+d", entry.offsetMs))
+                .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.7))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .fixedSize()
+            Button(intent: AdjustOffsetIntent(delta: 100)) {
+                Image(systemName: "hare.fill")
+                    .frame(maxWidth: .infinity, minHeight: 26)
+            }
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 13))
+        .foregroundStyle(.white)
+        .padding(.vertical, 2)
+        .background(.white.opacity(0.12), in: Capsule())
     }
 }

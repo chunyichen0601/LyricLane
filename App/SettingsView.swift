@@ -83,6 +83,13 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Toggle(isOn: $settings.widgetAdjustButtons) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("小工具顯示 🐢／🐇 微調按鈕")
+                    Text("在 CarPlay 小工具上直接調歌詞快慢，歌詞字會小一點")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             CarPreview()
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets())
@@ -95,12 +102,17 @@ struct SettingsView: View {
 
     private var siriSection: some View {
         Section {
-            SiriTipView(intent: StartLyricsIntent())
+            NavigationLink {
+                CarPlayAutomationGuide()
+            } label: {
+                Label("CarPlay 自動開關", systemImage: "car.fill")
+            }
+            SiriTipView(intent: CarPlayArriveIntent())
             ShortcutsLink()
         } header: {
             Text("Siri 與捷徑")
         } footer: {
-            Text("建議在「捷徑 › 自動化 › CarPlay › 連線時」執行「開始顯示歌詞」，上車就會自動出現歌詞。")
+            Text("設定一次，上車自動開歌詞與 Spotify，下車自動關閉 LyricLane。")
         }
     }
 
@@ -118,6 +130,58 @@ struct SettingsView: View {
             Button("登出", role: .destructive) { auth.logout() }
         } header: {
             Text("帳號")
+        }
+    }
+}
+
+/// 帶使用者建立兩個 CarPlay 自動化（iOS 不允許 App 自己建立自動化，只能引導）
+struct CarPlayAutomationGuide: View {
+    var body: some View {
+        List {
+            Section {
+                Text("LyricLane 已經把「上車」和「下車」兩個動作放進捷徑 App 了。你只要建立兩個自動化，大約 1 分鐘。")
+                    .font(.subheadline)
+            }
+
+            Section {
+                step(1, "打開「捷徑」App，點下方「自動化」")
+                step(2, "點右上角 ＋，選「CarPlay」")
+                step(3, "勾「連線時」，選「立即執行」，點「下一步」")
+                step(4, "搜尋 LyricLane，選「上車：開始歌詞＋打開 Spotify」")
+            } header: {
+                Label("上車：自動開歌詞＋Spotify", systemImage: "car.fill")
+            }
+
+            Section {
+                step(1, "再點一次 ＋，選「CarPlay」")
+                step(2, "這次勾「中斷連線時」，選「立即執行」")
+                step(3, "搜尋 LyricLane，選「下車：關閉 LyricLane」")
+            } header: {
+                Label("下車：自動關閉 LyricLane", systemImage: "parkingsign.circle.fill")
+            } footer: {
+                Text("下車只會關閉 LyricLane 的歌詞、即時動態和背景同步，Spotify 不會被關掉。")
+            }
+
+            Section {
+                Button {
+                    if let url = URL(string: "shortcuts://") { UIApplication.shared.open(url) }
+                } label: {
+                    Label("打開捷徑 App", systemImage: "arrow.up.forward.app")
+                }
+            }
+        }
+        .navigationTitle("CarPlay 自動開關")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func step(_ n: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("\(n)")
+                .font(.caption.bold())
+                .frame(width: 22, height: 22)
+                .background(Theme.accent, in: Circle())
+                .foregroundStyle(.black)
+            Text(text)
         }
     }
 }

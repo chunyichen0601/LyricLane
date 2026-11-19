@@ -29,6 +29,8 @@ enum SharedStore {
         var carShowNext: Bool
         /// 沒有歌詞時要顯示的文字
         var message: String
+        /// 小工具上是否顯示 🐢／🐇 微調按鈕（舊資料沒有這欄，所以是 Optional）
+        var showAdjustButtons: Bool?
     }
 
     /// SideStore／AltStore 用免費帳號簽名時會改掉 App Group 名稱，

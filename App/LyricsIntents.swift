@@ -27,9 +27,54 @@ struct StopLyricsIntent: LiveActivityIntent {
     }
 }
 
+// MARK: - CarPlay 上車／下車（給「捷徑 › 自動化 › CarPlay」用）
+// 不回傳對話框，避免在車上被 Siri 念出來。
+
+struct CarPlayArriveIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "上車：開始歌詞＋打開 Spotify"
+    static var description = IntentDescription("開始同步歌詞（更新 CarPlay 小工具），並打開 Spotify。")
+    static var openAppWhenRun = false
+
+    @MainActor
+    func perform() async throws -> some IntentResult & OpensIntent {
+        _ = AppModel.shared.engine.startFromIntent()
+        return .result(opensIntent: OpenURLIntent(URL(string: "spotify:")!))
+    }
+}
+
+struct CarPlayLeaveIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "下車：關閉 LyricLane"
+    static var description = IntentDescription("關閉歌詞與即時動態、停止背景同步。Spotify 不受影響。")
+    static var openAppWhenRun = false
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        AppModel.shared.engine.stopFromIntent()
+        return .result()
+    }
+}
+
 /// 不用設定就會自動出現在「捷徑」App 與 Siri 裡
 struct LyricLaneShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: CarPlayArriveIntent(),
+            phrases: [
+                "\(.applicationName)上車",
+                "Drive with \(.applicationName)",
+            ],
+            shortTitle: "上車：歌詞＋Spotify",
+            systemImageName: "car.fill"
+        )
+        AppShortcut(
+            intent: CarPlayLeaveIntent(),
+            phrases: [
+                "\(.applicationName)下車",
+                "Park \(.applicationName)",
+            ],
+            shortTitle: "下車：關閉 LyricLane",
+            systemImageName: "parkingsign.circle.fill"
+        )
         AppShortcut(
             intent: StartLyricsIntent(),
             phrases: [
