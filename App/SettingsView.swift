@@ -201,14 +201,14 @@ struct CarPreview: View {
         let prev = text(i - 1, "上一句歌詞")
         let line = text(i, "這是一句比較長的歌詞範例，看看會不會破圖")
         let next = text(i + 1, "下一句歌詞")
-        let side = max(11, settings.carFontSize * 0.5)
+        let prevSize = max(11, settings.carFontSize * 0.5)
+        let nextSize = max(12, settings.carFontSize * 0.6)
 
-        // 與 CarPlay 小工具相同的排版：上下句小字霧化、本句大字清晰
+        // 與 CarPlay 小工具相同的排版：上一句最小最淡、本句大字、下一句小字但清晰
         VStack(alignment: .leading, spacing: 3) {
             Text(prev)
-                .font(.system(size: side, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.4))
-                .blur(radius: 1.2)
+                .font(.system(size: prevSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.3))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(line)
@@ -219,9 +219,8 @@ struct CarPreview: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .layoutPriority(1)
             Text(next)
-                .font(.system(size: side, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.4))
-                .blur(radius: 1.2)
+                .font(.system(size: nextSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }

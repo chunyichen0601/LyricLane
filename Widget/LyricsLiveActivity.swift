@@ -90,8 +90,8 @@ struct LyricsActivityView: View {
 
             if state.carShowNext && !state.nextLine.isEmpty {
                 Text(state.nextLine)
-                    .font(.system(size: max(11, state.carFontSize * 0.5), weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .font(.system(size: max(12, state.carFontSize * 0.6), weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.75))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .truncationMode(.tail)

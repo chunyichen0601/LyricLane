@@ -20,6 +20,12 @@ final class LiveActivityManager {
     private var lastSent = Date.distantPast
     private var pending: State?
     private var sending = false
+    /// 目前這輪送出開始的時間，用來偵測「送出卡住」
+    private var sendStartedAt = Date.distantPast
+    /// 每開一個新的送出迴圈就 +1；舊的迴圈發現自己過期了就自行結束
+    private var senderGeneration = 0
+    /// 單次 update 超過這個時間還沒回來，就當作卡住，不再等它
+    private static let sendTimeout: TimeInterval = 1.5
 
     var isActive: Bool {
         adoptExisting()
@@ -54,14 +60,26 @@ final class LiveActivityManager {
         // 「只送最新的」：上一個更新還在送時，新的狀態先放著；送完後只補送最後一個。
         // 連續跳歌時不會排出一長串過期的更新，畫面也不會落後好幾首歌。
         pending = state
-        guard !sending else { return }
+        // 上一個 update 還在送：正常情況就等它送完再補送最新的。
+        // 但 CarPlay 上系統有時會讓 activity.update 很久都不返回，
+        // 以前一卡住 sending 就永遠是 true，之後所有換句都被擋住（歌詞停在某一句）。
+        // 超過 sendTimeout 就放棄等待，另開一個送出迴圈。
+        if sending, Date().timeIntervalSince(sendStartedAt) < Self.sendTimeout { return }
+        startSender(activity)
+    }
+
+    private func startSender(_ activity: Activity<LyricsActivityAttributes>) {
+        senderGeneration += 1
+        let generation = senderGeneration
         sending = true
         Task { [weak self] in
-            while let me = self, let next = me.pending {
+            while let me = self, me.senderGeneration == generation, let next = me.pending {
                 me.pending = nil
+                me.sendStartedAt = Date()
                 await activity.update(me.content(next))
             }
-            self?.sending = false
+            // 只有「目前這一代」的迴圈可以把 sending 關掉（舊的、卡住的迴圈回來時不要動它）
+            if let me = self, me.senderGeneration == generation { me.sending = false }
         }
     }
 
@@ -69,6 +87,9 @@ final class LiveActivityManager {
         let all = Activity<LyricsActivityAttributes>.activities
         activity = nil
         lastState = nil
+        pending = nil
+        senderGeneration += 1
+        sending = false
         Task {
             for a in all { await a.end(nil, dismissalPolicy: .immediate) }
         }
@@ -80,6 +101,8 @@ final class LiveActivityManager {
         activity = nil
         lastState = nil
         pending = nil
+        senderGeneration += 1
+        sending = false
         for a in all { await a.end(nil, dismissalPolicy: .immediate) }
     }
 

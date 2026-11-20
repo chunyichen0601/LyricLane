@@ -38,6 +38,7 @@ final class SpotifyRemote: NSObject {
         // 卡在「連線中」超過 15 秒：視為失敗，丟掉重來（避免永遠等下去）
         if status == .connecting {
             guard Date().timeIntervalSince(lastAttempt) > 15 else { return }
+            appRemote?.playerAPI?.delegate = nil
             appRemote?.delegate = nil
             appRemote?.disconnect()
             setStatus(.failed("連線逾時"))
@@ -63,7 +64,11 @@ final class SpotifyRemote: NSObject {
     func disconnect() {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        // 先拔掉 delegate：舊連線之後才回來的「已中斷」通知不能影響新連線
+        appRemote?.playerAPI?.delegate = nil
+        appRemote?.delegate = nil
         appRemote?.disconnect()
+        appRemote = nil
         setStatus(.idle)
     }
 
@@ -106,6 +111,7 @@ final class SpotifyRemote: NSObject {
     }
 
     fileprivate func didConnect(_ remote: SPTAppRemote) {
+        guard remote === appRemote else { return } // 過期的連線
         lastEventAt = Date() // 給第一次狀態回來的緩衝時間
         setStatus(.connected)
         remote.playerAPI?.delegate = self
@@ -118,7 +124,10 @@ final class SpotifyRemote: NSObject {
         }
     }
 
-    fileprivate func didDrop(_ message: String) {
+    fileprivate func didDrop(_ remote: SPTAppRemote, _ message: String) {
+        // 以前沒有檢查是哪一條連線：舊連線晚到的「已中斷」會把新連線的
+        // 5 秒對時計時器關掉，直連就會每 15 秒左右斷一次、反覆重連，歌詞一直被重新對時。
+        guard remote === appRemote else { return }
         refreshTimer?.invalidate()
         refreshTimer = nil
         setStatus(.failed(message))
@@ -132,12 +141,12 @@ extension SpotifyRemote: SPTAppRemoteDelegate, SPTAppRemotePlayerStateDelegate {
 
     nonisolated func appRemote(_ appRemote: SPTAppRemote, didFailConnectionAttemptWithError error: Error?) {
         let msg = error?.localizedDescription ?? "連線失敗"
-        Task { @MainActor in self.didDrop(msg) }
+        Task { @MainActor in self.didDrop(appRemote, msg) }
     }
 
     nonisolated func appRemote(_ appRemote: SPTAppRemote, didDisconnectWithError error: Error?) {
         let msg = error?.localizedDescription ?? "已中斷"
-        Task { @MainActor in self.didDrop(msg) }
+        Task { @MainActor in self.didDrop(appRemote, msg) }
     }
 
     nonisolated func playerStateDidChange(_ playerState: SPTAppRemotePlayerState) {

@@ -436,6 +436,13 @@ final class SyncEngine: ObservableObject {
     /// - 連續跳歌時只刷最後停下的那首（防抖）
     /// - 播放位置只差一點點（< 0.5 秒）的對時，不刷
     private func publishWidget(after delay: Double = 0.4, force: Bool = false) {
+        var delay = delay
+        // 同一首歌的對時修正：至少隔 widgetMinInterval 秒才刷一次。
+        // 直連斷斷續續時會一直來回對時，以前每次都 reloadAllTimelines，
+        // 系統覺得刷太兇就開始忽略，小工具就停在某一句。換歌、手動調整（force）不受限。
+        if !force, track?.trackID == lastWidgetSignature?.trackID, let last = lastWidgetReloadAt {
+            delay = max(delay, Self.widgetMinInterval - Date().timeIntervalSince(last))
+        }
         widgetTask?.cancel()
         widgetTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -453,6 +460,8 @@ final class SyncEngine: ObservableObject {
     }
     private var lastWidgetSignature: WidgetSignature?
     private var lastWidgetTrackStart: Date?
+    private var lastWidgetReloadAt: Date?
+    private static let widgetMinInterval: TimeInterval = 10
 
     private func writeWidgetNow(force: Bool) {
         let duration = Double(track?.durationMs ?? 0) / 1000
@@ -473,6 +482,7 @@ final class SyncEngine: ObservableObject {
         }
         lastWidgetSignature = signature
         lastWidgetTrackStart = trackStart
+        lastWidgetReloadAt = Date()
         widgetReloads += 1
 
         SharedStore.save(.init(
