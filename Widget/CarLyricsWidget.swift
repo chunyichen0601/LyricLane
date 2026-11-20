@@ -166,12 +166,14 @@ struct CarLyricsView: View {
     let entry: CarLyricsEntry
     let style: CarLyricsStyle
 
-    /// 上下兩句：比本句小、半透明、霧化
-    private var sideSize: Double { max(11, entry.fontSize * 0.5) }
+    /// 上一句：最小、很淡（已經唱過，只是給個上下文）
+    private var previousSize: Double { max(11, entry.fontSize * 0.5) }
+    /// 下一句：比本句小，但清晰好讀（開車時可以先瞄到要唱什麼）
+    private var nextSize: Double { max(12, entry.fontSize * 0.6) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            side(entry.previous)
+            side(entry.previous, size: previousSize, opacity: 0.3)
 
             // 本句：清晰、最大；放不下就自動縮小，不截斷
             Text(entry.line)
@@ -183,7 +185,7 @@ struct CarLyricsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .layoutPriority(1)
 
-            side(entry.next)
+            side(entry.next, size: nextSize, opacity: 0.75)
 
             switch style {
             case .pure:
@@ -198,13 +200,14 @@ struct CarLyricsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
+    // 不用 .blur：小工具的每個時間點都要預先算圖，模糊濾鏡很吃資源，
+    // CarPlay 上容易讓系統來不及換句；改用透明度區分層次。
     @ViewBuilder
-    private func side(_ text: String) -> some View {
+    private func side(_ text: String, size: Double, opacity: Double) -> some View {
         // 沒有上一句／下一句時也保留位置，本句才不會上下跳動
         Text(text.isEmpty ? " " : text)
-            .font(.system(size: sideSize, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.4))
-            .blur(radius: 1.2)
+            .font(.system(size: size, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(opacity))
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -241,7 +244,7 @@ struct CarLyricsView: View {
                 Image(systemName: "tortoise.fill")
                     .frame(maxWidth: .infinity, minHeight: 26)
             }
-            Text(entry.offsetMs == 0 ? "0" : String(format: "%+d", entry.offsetMs))
+            Text(entry.offsetMs > 0 ? "+\(entry.offsetMs)" : "\(entry.offsetMs)")
                 .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white.opacity(0.7))
                 .lineLimit(1)
