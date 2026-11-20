@@ -228,6 +228,7 @@ final class SyncEngine: ObservableObject {
 
     /// 回傳下次輪詢前要等幾秒
     private func pollOnce() async -> Double {
+        KeepAlive.shared.ensureRunning() // 每輪（最多 5 秒）檢查一次背景音訊還在不在
         guard auth.isLoggedIn else {
             status = "請先登入 Spotify"
             return 3
