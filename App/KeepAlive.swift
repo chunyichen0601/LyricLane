@@ -40,6 +40,14 @@ final class KeepAlive {
         try? AVAudioSession.sharedInstance().setActive(false)
     }
 
+    /// 看門狗：背景音訊停了就重新啟動。
+    /// 被 Siri、導航語音、電話打斷後，iOS 不保證一定會送「打斷結束」通知；
+    /// 沒收到的話無聲音訊就一直停著，App 幾十秒後被暫停，動態島的歌詞就卡在那一句。
+    func ensureRunning() {
+        guard isRunning, engine?.isRunning != true else { return }
+        restart()
+    }
+
     /// 重新建立背景音訊（重新同步時也會用到）
     func restart() {
         isRunning = true
