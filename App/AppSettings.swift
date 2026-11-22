@@ -35,8 +35,14 @@ final class AppSettings: ObservableObject {
     }
 
 
+    /// 用低精度定位讓 App 在背景持續執行（即時動態在背景要能更新，必須開著）
+    @Published var useLocationKeepAlive: Bool {
+        didSet { UserDefaults.standard.set(useLocationKeepAlive, forKey: "useLocationKeepAlive") }
+    }
+
     private init() {
         let d = UserDefaults.standard
+        useLocationKeepAlive = d.object(forKey: "useLocationKeepAlive") as? Bool ?? true
         autoLiveActivity = d.object(forKey: "autoLiveActivity") as? Bool ?? false
         useAppRemote = d.object(forKey: "useAppRemote") as? Bool ?? true
         clientID = d.string(forKey: "clientID") ?? ""

@@ -86,6 +86,7 @@ final class SyncEngine: ObservableObject {
         guard pollTask == nil else { return }
         DiagLog.log("開始背景同步")
         KeepAlive.shared.start()
+        LocationKeepAlive.shared.start()
         isRunning = true
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -103,6 +104,7 @@ final class SyncEngine: ObservableObject {
         lineTimer = nil
         remote.disconnect()
         KeepAlive.shared.stop()
+        LocationKeepAlive.shared.stop()
         isRunning = false
         status = "已停止"
         updateSourceLabel()
@@ -175,13 +177,13 @@ final class SyncEngine: ObservableObject {
         isRunning = false
         start()
 
-        // 5. 原本有開即時動態：關掉、等它結束、再開新的
-        if keepActivity {
-            Task { [weak self] in
-                guard let self else { return }
-                await self.activity.endAndWait()
-                self.startActivity()
-            }
+        // 5. 即時動態：不要關掉再重開！App 在背景時 iOS 常常不讓你開新的，
+        //    以前在車上按 ↻ 可能讓歌詞直接消失。現在只強制送一次最新內容。
+        if activity.isActive {
+            activity.forceRefresh(makeState(), staleDate: staleDateForCurrentLine())
+            activityRunning = true
+        } else if keepActivity {
+            startActivity() // 原本有、但已經不見了：試著重開（前景一定成功，背景看系統）
         }
 
         // 正常情況：抓到歌詞（或確認沒在播放）就會結束；最多等 8 秒
@@ -236,6 +238,7 @@ final class SyncEngine: ObservableObject {
     /// 回傳下次輪詢前要等幾秒
     private func pollOnce() async -> Double {
         KeepAlive.shared.ensureRunning() // 每輪（最多 5 秒）檢查一次背景音訊還在不在
+        LocationKeepAlive.shared.ensureRunning()
         guard auth.isLoggedIn else {
             status = "請先登入 Spotify"
             return 3
@@ -447,7 +450,7 @@ final class SyncEngine: ObservableObject {
             // 拿來跟畫面對照：這裡有記但動態島沒動 = iOS 沒顯示更新；這裡也停了 = App 被暫停
             if idx >= 0 { DiagLog.log("第 \(idx + 1)/\(lines.count) 句") }
         }
-        activity.update(makeState())
+        activity.update(makeState(), staleDate: staleDateForCurrentLine())
 
         guard playing, idx + 1 < lines.count else { return }
         let wait = max(0.005, lines[idx + 1].time - pos)
@@ -469,6 +472,17 @@ final class SyncEngine: ObservableObject {
     }
 
     // MARK: - 即時動態 / 小工具
+
+    /// 即時動態的「過期時間」：下一句該出現的時間再加 10 秒。
+    /// App 如果真的被系統結束，動態島很快就會改顯示「已停止」，不會一直停在舊歌詞上。
+    /// 暫停或沒有歌詞時回傳 nil（用預設的 2 分鐘，靠心跳延長）。
+    private func staleDateForCurrentLine() -> Date? {
+        guard playing, !lines.isEmpty else { return nil }
+        let pos = position() + AppSettings.shared.offsetMs / 1000
+        let idx = index(for: pos)
+        guard idx + 1 < lines.count else { return nil }
+        return Date().addingTimeInterval(max(0, lines[idx + 1].time - pos) + 10)
+    }
 
     /// 把整首歌的時間表交給 CarPlay 小工具。
     ///

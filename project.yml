@@ -30,7 +30,11 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         NSSupportsLiveActivities: true
-        UIBackgroundModes: [audio]
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        # location：讓 App 在背景可以更新即時動態（只有音訊的話 iOS 會擋）
+        UIBackgroundModes: [audio, location]
+        NSLocationWhenInUseUsageDescription: "LyricLane 用低精度定位讓 App 在背景持續執行，歌詞才能在動態島與 CarPlay 上準時換句。位置不會被儲存或上傳。"
+        NSLocationAlwaysAndWhenInUseUsageDescription: "選「永遠」才能在連上 CarPlay 時自動在背景開始顯示歌詞。只用低精度定位，位置不會被儲存或上傳。"
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         CFBundleURLTypes:
           - CFBundleURLName: dynlyrics

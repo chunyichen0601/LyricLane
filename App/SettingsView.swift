@@ -98,10 +98,25 @@ struct SettingsView: View {
                 }
             }
             Toggle("即時動態顯示下一句", isOn: $settings.carShowNext)
+            Toggle(isOn: $settings.useLocationKeepAlive) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("用定位保持背景執行")
+                    Text("定位權限：\(LocationKeepAlive.describe(LocationKeepAlive.shared.authorization))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .onChange(of: settings.useLocationKeepAlive) { _, on in
+                on ? LocationKeepAlive.shared.start() : LocationKeepAlive.shared.stop()
+            }
         } header: {
             Text("即時動態")
         } footer: {
-            Text("不想佔用動態島就關閉「自動開啟」，只用 CarPlay 小工具即可。")
+            Text("""
+            不想佔用動態島就關閉「自動開啟」，只用 CarPlay 小工具即可。
+            「用定位保持背景執行」請保持開啟：iOS 不讓只在背景播音訊的 App 更新即時動態，\
+            有定位才行（跟導航 App 一樣）。只用低精度定位、不開 GPS，位置不會儲存或上傳。\
+            定位權限建議選「永遠」，CarPlay 自動化才能在背景啟動。
+            """)
         }
     }
 

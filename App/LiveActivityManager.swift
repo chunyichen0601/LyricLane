@@ -19,6 +19,7 @@ final class LiveActivityManager {
     private var lastState: State?
     private var lastSent = Date.distantPast
     private var pending: State?
+    private var pendingStale: Date?
     private var sending = false
     /// 目前這輪送出開始的時間，用來偵測「送出卡住」
     private var sendStartedAt = Date.distantPast
@@ -53,7 +54,13 @@ final class LiveActivityManager {
     }
 
     /// 在本機直接更新（不經過推播，所以沒有推播的次數限制與網路延遲）
-    func update(_ state: State) {
+    /// 重新同步用：不管內容有沒有變，都送一次
+    func forceRefresh(_ state: State, staleDate: Date? = nil) {
+        lastState = nil
+        update(state, staleDate: staleDate)
+    }
+
+    func update(_ state: State, staleDate: Date? = nil) {
         guard let activity, activity.activityState == .active else {
             if let activity, !loggedInactive {
                 loggedInactive = true
@@ -69,6 +76,7 @@ final class LiveActivityManager {
         // 「只送最新的」：上一個更新還在送時，新的狀態先放著；送完後只補送最後一個。
         // 連續跳歌時不會排出一長串過期的更新，畫面也不會落後好幾首歌。
         pending = state
+        pendingStale = staleDate
         // 上一個 update 還在送：正常情況就等它送完再補送最新的。
         // 但 CarPlay 上系統有時會讓 activity.update 很久都不返回，
         // 以前一卡住 sending 就永遠是 true，之後所有換句都被擋住（歌詞停在某一句）。
@@ -86,10 +94,11 @@ final class LiveActivityManager {
         sending = true
         Task { [weak self] in
             while let me = self, me.senderGeneration == generation, let next = me.pending {
+                let stale = me.pendingStale
                 me.pending = nil
                 let t0 = Date()
                 me.sendStartedAt = t0
-                await activity.update(me.content(next))
+                await activity.update(me.content(next, staleDate: stale))
                 let took = Date().timeIntervalSince(t0)
                 if took > 0.5 {
                     DiagLog.log(String(format: "即時動態：一次更新花了 %.1f 秒（系統在拖延）", took))
@@ -136,8 +145,8 @@ final class LiveActivityManager {
         _ = done.wait(timeout: .now() + 2)
     }
 
-    private func content(_ state: State) -> ActivityContent<State> {
-        ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter))
+    private func content(_ state: State, staleDate: Date? = nil) -> ActivityContent<State> {
+        ActivityContent(state: state, staleDate: staleDate ?? Date().addingTimeInterval(Self.staleAfter))
     }
 
     private func adoptExisting() {
