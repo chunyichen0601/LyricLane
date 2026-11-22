@@ -1,3 +1,4 @@
+import ActivityKit
 import Foundation
 import WidgetKit
 
@@ -46,6 +47,25 @@ final class SyncEngine: ObservableObject {
     private var anchorDate = Date()
     private var playing = false
     private var behindStreak = 0
+    private var previousTrackID: String?
+    private var trackChangedAt = Date.distantPast
+    private var lastTrackChangeTrusted = false
+    private var lineTimerDeadline = Date.distantFuture
+    /// 即時動態上顯示的那一句（比畫面上的歌詞提早 activityLead 秒換）
+    private var activityIndex = -1
+    /// 使用者有開即時動態：被滑掉／超過 8 小時被系統結束後，下次回到前景自動重開
+    private var wantsActivity = false
+    private var prefetchTask: Task<Void, Never>?
+    private var lastDiagSummaryAt = Date.distantPast
+
+    /// 即時動態提早送出的秒數。
+    /// activity.update 回傳不代表已經顯示，系統還要傳遞、重畫；不提早的話畫面一定慢半拍。
+    /// 參考 DriveVerse：轉場 0.35 秒 + 0.15 秒緩衝 = 0.5 秒。
+    static let activityLead = 0.5
+    /// CarPlay 小工具額外提早（CarPlay 切換時間點本來就會晚一點，Lyrics Dash 也有同樣的設定）
+    static let carWidgetLead = 0.5
+    /// 預抓接下來幾首的歌詞
+    static let prefetchCount = 5
 
     private var pollTask: Task<Void, Never>?
     private var lyricsTask: Task<Void, Never>?
@@ -60,6 +80,10 @@ final class SyncEngine: ObservableObject {
             self?.status = snap.isPlaying ? "同步中" : "已暫停"
         }
         remote.onStatusChange = { [weak self] _ in self?.updateSourceLabel() }
+        activity.onEnded = { [weak self] in
+            self?.activityRunning = false
+            DiagLog.log("即時動態已結束（被滑掉或到了系統時間上限），下次打開 App 會自動重開")
+        }
     }
 
     func position(at date: Date = Date()) -> Double {
@@ -73,14 +97,17 @@ final class SyncEngine: ObservableObject {
         start() // 背景同步一律開著（CarPlay 小工具靠它更新）
         if activity.isActive {
             activityRunning = true
-        } else if AppSettings.shared.autoLiveActivity {
-            startActivity() // 只有使用者選擇「自動開啟」才會出現在動態島
+        } else if AppSettings.shared.autoLiveActivity || wantsActivity {
+            // 「自動開啟」，或之前有開但被滑掉／到了 8 小時上限：App 在前景時才能開新的
+            startActivity()
         }
     }
 
     func start() {
         guard pollTask == nil else { return }
+        DiagLog.log("開始背景同步")
         KeepAlive.shared.start()
+        LocationKeepAlive.shared.start()
         isRunning = true
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -91,12 +118,14 @@ final class SyncEngine: ObservableObject {
     }
 
     func stop() {
+        DiagLog.log("停止背景同步")
         pollTask?.cancel()
         pollTask = nil
         lineTimer?.cancel()
         lineTimer = nil
         remote.disconnect()
         KeepAlive.shared.stop()
+        LocationKeepAlive.shared.stop()
         isRunning = false
         status = "已停止"
         updateSourceLabel()
@@ -106,6 +135,10 @@ final class SyncEngine: ObservableObject {
         do {
             try activity.start(state: makeState())
             activityRunning = true
+            wantsActivity = true
+            if !ActivityAuthorizationInfo().frequentPushesEnabled {
+                DiagLog.log("⚠️ 「更頻繁更新」沒開：設定 › LyricLane › 即時動態 › 更頻繁更新")
+            }
         } catch {
             activityRunning = false
             status = "無法啟動即時動態：\(error.localizedDescription)"
@@ -113,6 +146,7 @@ final class SyncEngine: ObservableObject {
     }
 
     func endActivity() {
+        wantsActivity = false
         activity.end()
         activityRunning = false
     }
@@ -136,6 +170,7 @@ final class SyncEngine: ObservableObject {
     /// 重新同步：歌詞卡住、不同步、抓錯歌詞時用。整套流程重來，不只是刷新畫面。
     func resync() {
         guard auth.isLoggedIn, !isResyncing else { return }
+        DiagLog.log("手動重新同步")
         resyncPhase = .working
         status = "重新同步中…"
         let keepActivity = activityRunning || activity.isActive
@@ -158,6 +193,7 @@ final class SyncEngine: ObservableObject {
         rawLines = []
         lines = []
         currentIndex = -1
+        activityIndex = -1
         lyricsStatus = ""
         behindStreak = 0
         lastDriftMs = 0
@@ -168,13 +204,13 @@ final class SyncEngine: ObservableObject {
         isRunning = false
         start()
 
-        // 5. 原本有開即時動態：關掉、等它結束、再開新的
-        if keepActivity {
-            Task { [weak self] in
-                guard let self else { return }
-                await self.activity.endAndWait()
-                self.startActivity()
-            }
+        // 5. 即時動態：不要關掉再重開！App 在背景時 iOS 常常不讓你開新的，
+        //    以前在車上按 ↻ 可能讓歌詞直接消失。現在只強制送一次最新內容。
+        if activity.isActive {
+            activity.forceRefresh(makeState(), staleDate: staleDateForCurrentLine())
+            activityRunning = true
+        } else if keepActivity {
+            startActivity() // 原本有、但已經不見了：試著重開（前景一定成功，背景看系統）
         }
 
         // 正常情況：抓到歌詞（或確認沒在播放）就會結束；最多等 8 秒
@@ -228,6 +264,12 @@ final class SyncEngine: ObservableObject {
 
     /// 回傳下次輪詢前要等幾秒
     private func pollOnce() async -> Double {
+        KeepAlive.shared.ensureRunning() // 每輪（最多 5 秒）檢查一次背景音訊還在不在
+        LocationKeepAlive.shared.ensureRunning()
+        if activityRunning, Date().timeIntervalSince(lastDiagSummaryAt) > 60 {
+            lastDiagSummaryAt = Date()
+            DiagLog.log(activity.diagSummary())
+        }
         guard auth.isLoggedIn else {
             status = "請先登入 Spotify"
             return 3
@@ -241,6 +283,7 @@ final class SyncEngine: ObservableObject {
             }
             // 連著但 15 秒沒收到任何狀態（例如連續跳歌後 Spotify 那邊卡住）：
             // 自動斷開，這一輪先改用網路模式，下一輪再重新直連——不用使用者手動重開 App
+            DiagLog.log("直連：15 秒沒收到狀態，斷開改用網路")
             remote.disconnect()
         }
         await tryConnectRemote()
@@ -262,9 +305,11 @@ final class SyncEngine: ObservableObject {
             return max(0.5, min(3, remaining + 0.3))
         } catch SpotifyError.rateLimited(let seconds) {
             status = "Spotify 限流，\(seconds) 秒後重試"
+            DiagLog.log(status)
             return Double(max(seconds, 1))
         } catch {
             status = "連線錯誤：\(error.localizedDescription)"
+            DiagLog.log(status)
             return 5
         }
     }
@@ -295,6 +340,7 @@ final class SyncEngine: ObservableObject {
     }
 
     private func handleIdle() {
+        if status != "目前沒有播放" { DiagLog.log("Spotify 目前沒有播放") }
         status = "目前沒有播放"
         if playing {
             anchorProgress = position()
@@ -313,6 +359,17 @@ final class SyncEngine: ObservableObject {
         latencyMs = Int((snap.latency * 1000).rounded())
 
         if snap.trackID != track?.trackID {
+            // 網路資料常常落後好幾秒：直連剛告訴我們換歌了，Web API 卻還在回報上一首。
+            // 以前會把它當成「又換回上一首」，歌詞被清掉重抓，連續跳歌時就一路跟不上。
+            if !trusted, lastTrackChangeTrusted, snap.trackID == previousTrackID,
+               Date().timeIntervalSince(trackChangedAt) < 10 {
+                DiagLog.log("忽略網路回報的舊資料（還是上一首：\(snap.title)）")
+                return
+            }
+            previousTrackID = track?.trackID
+            trackChangedAt = Date()
+            lastTrackChangeTrusted = trusted
+            DiagLog.log("換歌：\(snap.title) - \(snap.artist)（\(trusted ? "直連" : "網路")，位置 \(String(format: "%.1f", progress)) 秒\(snap.isPlaying ? "" : "，暫停中")）")
             track = snap
             setAnchor(progress, snap.sampledAt, snap.isPlaying)
             behindStreak = 0
@@ -320,6 +377,7 @@ final class SyncEngine: ObservableObject {
             rawLines = []
             lines = []
             currentIndex = -1
+            activityIndex = -1
             loadLyrics(for: snap)
             reschedule()
             publishWidget(after: 4) // 一首歌只刷一次：等歌詞抓到；抓不到最多等 4 秒
@@ -327,6 +385,7 @@ final class SyncEngine: ObservableObject {
         }
 
         track = snap
+        let playingBefore = playing
         let drift = progress - position(at: snap.sampledAt)
         lastDriftMs = Int((drift * 1000).rounded())
         var reanchored = false
@@ -357,6 +416,9 @@ final class SyncEngine: ObservableObject {
             behindStreak = 0 // 小幅落後：視為伺服器的舊資料，忽略
         }
 
+        if reanchored, abs(drift) > 0.3 || snap.isPlaying != playingBefore {
+            DiagLog.log("重新對時：誤差 \(lastDriftMs) ms（\(trusted ? "直連" : "網路")\(snap.isPlaying ? "" : "，暫停")）")
+        }
         reschedule()
         if reanchored { publishWidget() }
     }
@@ -376,14 +438,18 @@ final class SyncEngine: ObservableObject {
             // 防抖：停在同一首 0.35 秒才開始抓歌詞；連續跳歌時中間的歌都不會送出請求
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard let self, !Task.isCancelled else { return }
+            let t0 = Date()
             let result = await self.provider.lyrics(for: snap)
             guard !Task.isCancelled, self.track?.trackID == snap.trackID else { return }
+            DiagLog.log(result.isEmpty ? "找不到歌詞：\(snap.title)"
+                        : "歌詞載入：\(result.count) 句（\(Int(Date().timeIntervalSince(t0) * 1000)) ms）")
             self.rawLines = result
             self.lyricsStatus = result.isEmpty ? "找不到同步歌詞" : ""
             self.rebuildLines()
             self.reschedule()
             self.publishWidget(after: 0.2) // 歌詞到了就刷（會取消上面那個 4 秒的）
             self.finishResyncIfNeeded()
+            self.prefetchUpcoming(after: snap.trackID)
         }
     }
 
@@ -392,6 +458,28 @@ final class SyncEngine: ObservableObject {
         let toHant = StringTransform("Hans-Hant")
         lines = rawLines.map {
             LyricLine(time: $0.time, text: $0.text.applyingTransform(toHant, reverse: false) ?? $0.text)
+        }
+    }
+
+    /// 預抓 Spotify 播放佇列裡接下來幾首的歌詞（存進快取）。
+    /// 換歌時歌詞馬上就有，開到沒訊號的地方也不會斷。
+    /// 等 5 秒再開始：連續跳歌時不要每首都去問。
+    private func prefetchUpcoming(after trackID: String) {
+        prefetchTask?.cancel()
+        prefetchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let self, !Task.isCancelled, self.track?.trackID == trackID else { return }
+            guard let upcoming = try? await self.client.queue(limit: Self.prefetchCount + 1) else { return }
+            var cached = 0, fetched = 0, missing = 0
+            for song in upcoming where song.trackID != trackID {
+                if Task.isCancelled { return }
+                let had = self.provider.hasCached(song.trackID)
+                let result = await self.provider.lyrics(for: song)
+                if had { cached += 1 } else if result.isEmpty { missing += 1 } else { fetched += 1 }
+            }
+            if !Task.isCancelled, cached + fetched + missing > 0 {
+                DiagLog.log("預抓歌詞：接下來 \(cached + fetched + missing) 首，已有 \(cached)、新抓 \(fetched)、找不到 \(missing)")
+            }
         }
     }
 
@@ -412,21 +500,51 @@ final class SyncEngine: ObservableObject {
 
         let pos = position() + AppSettings.shared.offsetMs / 1000
         let idx = index(for: pos)
-        if idx != currentIndex { currentIndex = idx }
-        activity.update(makeState())
+        let activityPos = pos + Self.activityLead
+        activityIndex = index(for: activityPos)
+        if idx != currentIndex {
+            currentIndex = idx
+            // 拿來跟畫面對照：這裡有記但動態島沒動 = iOS 沒顯示更新；這裡也停了 = App 被暫停
+            if idx >= 0 { DiagLog.log("第 \(idx + 1)/\(lines.count) 句") }
+        }
+        activity.update(makeState(), staleDate: staleDateForCurrentLine())
 
-        guard playing, idx + 1 < lines.count else { return }
-        let wait = max(0.005, lines[idx + 1].time - pos)
+        // 下一次要叫醒的時間：畫面上的下一句，或即時動態的下一句（提早 0.5 秒），取比較早的
+        guard playing else { return }
+        var waits: [Double] = []
+        if idx + 1 < lines.count { waits.append(lines[idx + 1].time - pos) }
+        if activityIndex + 1 < lines.count { waits.append(lines[activityIndex + 1].time - activityPos) }
+        guard let soonest = waits.min() else { return }
+        let wait = max(0.005, soonest)
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
         timer.schedule(deadline: .now() + wait, leeway: .milliseconds(2))
+        lineTimerDeadline = Date().addingTimeInterval(wait)
         timer.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.reschedule() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let late = Date().timeIntervalSince(self.lineTimerDeadline)
+                if late > 1.5 {
+                    DiagLog.log(String(format: "⚠️ 換句計時器晚了 %.1f 秒（App 被系統暫停過）", late))
+                }
+                self.reschedule()
+            }
         }
         timer.resume()
         lineTimer = timer
     }
 
     // MARK: - 即時動態 / 小工具
+
+    /// 即時動態的「過期時間」：下一句該出現的時間再加 10 秒。
+    /// App 如果真的被系統結束，動態島很快就會改顯示「已停止」，不會一直停在舊歌詞上。
+    /// 暫停或沒有歌詞時回傳 nil（用預設的 2 分鐘，靠心跳延長）。
+    private func staleDateForCurrentLine() -> Date? {
+        guard playing, !lines.isEmpty else { return nil }
+        let pos = position() + AppSettings.shared.offsetMs / 1000 + Self.activityLead
+        let idx = index(for: pos)
+        guard idx + 1 < lines.count else { return nil }
+        return Date().addingTimeInterval(max(0, lines[idx + 1].time - pos) + 10)
+    }
 
     /// 把整首歌的時間表交給 CarPlay 小工具。
     ///
@@ -484,6 +602,7 @@ final class SyncEngine: ObservableObject {
         lastWidgetTrackStart = trackStart
         lastWidgetReloadAt = Date()
         widgetReloads += 1
+        DiagLog.log("通知小工具刷新：\(track?.title ?? "沒有播放")（\(lines.count) 句，第 \(widgetReloads) 次）")
 
         SharedStore.save(.init(
             title: track?.title ?? "",
@@ -496,7 +615,8 @@ final class SyncEngine: ObservableObject {
             offset: AppSettings.shared.offsetMs / 1000,
             carFontSize: AppSettings.shared.carFontSize,
             carShowNext: AppSettings.shared.carShowNext,
-            message: message
+            message: message,
+            lead: Self.carWidgetLead
         ))
         WidgetCenter.shared.reloadAllTimelines()
     }
@@ -509,12 +629,12 @@ final class SyncEngine: ObservableObject {
 
         if lines.isEmpty {
             line = track == nil ? "打開 Spotify 播放音樂" : (lyricsStatus.isEmpty ? title : lyricsStatus)
-        } else if currentIndex < 0 {
+        } else if activityIndex < 0 || activityIndex >= lines.count {
             line = "♪ " + title
             next = lines[0].text
         } else {
-            line = lines[currentIndex].text
-            if currentIndex + 1 < lines.count { next = lines[currentIndex + 1].text }
+            line = lines[activityIndex].text
+            if activityIndex + 1 < lines.count { next = lines[activityIndex + 1].text }
         }
         if line.isEmpty { line = "♪" }
 

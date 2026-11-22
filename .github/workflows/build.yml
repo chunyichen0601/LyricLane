@@ -6,6 +6,9 @@ name: Build IPA
 on:
   push:
     branches: [main, master]
+  # PR 也會用雲端 Xcode 編譯一次（只檢查能不能編譯，不會發佈到 SideStore）
+  pull_request:
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -64,6 +67,7 @@ jobs:
           path: DynLyrics.ipa
 
       - name: Generate SideStore source.json
+        if: github.event_name != 'pull_request'
         env:
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
@@ -102,6 +106,7 @@ jobs:
           PY
 
       - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -18,5 +18,7 @@ struct LyricsActivityAttributes: ActivityAttributes {
         var carFontSize: Double
         /// CarPlay 是否顯示下一句（關閉可讓目前這句更大）
         var carShowNext: Bool
+        /// 每次送出就 +1，用來確認 iOS 有沒有真的套用／畫出來（診斷用，由 LiveActivityManager 填）
+        var seq: Int = 0
     }
 }

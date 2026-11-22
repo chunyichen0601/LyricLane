@@ -30,6 +30,8 @@ enum SharedStore {
         var carShowNext: Bool
         /// 沒有歌詞時要顯示的文字
         var message: String
+        /// CarPlay 小工具額外提早的秒數（CarPlay 換時間點本來就會晚一點）
+        var lead: Double?
     }
 
     /// SideStore／AltStore 用免費帳號簽名時會改掉 App Group 名稱，
@@ -50,16 +52,16 @@ enum SharedStore {
         return defaultGroup
     }()
 
-    static var isAvailable: Bool { container != nil }
+    static var isAvailable: Bool { containerURL != nil }
 
-    private static var container: URL? {
+    static var containerURL: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID)
     }
 
     // 用「檔案」而不是 UserDefaults 交換資料：
     // UserDefaults 跨程式（App ↔ 小工具）可能讀到快取的舊值，檔案每次讀都是最新的。
-    private static var nowPlayingURL: URL? { container?.appendingPathComponent("nowPlaying.json") }
-    private static var widgetStatusURL: URL? { container?.appendingPathComponent("widgetStatus.json") }
+    private static var nowPlayingURL: URL? { containerURL?.appendingPathComponent("nowPlaying.json") }
+    private static var widgetStatusURL: URL? { containerURL?.appendingPathComponent("widgetStatus.json") }
 
     static func save(_ value: NowPlaying) {
         guard let url = nowPlayingURL, let data = try? JSONEncoder().encode(value) else { return }
@@ -72,6 +74,46 @@ enum SharedStore {
         var lastTimelineAt: Date
         var title: String
         var entries: Int
+    }
+
+    // MARK: - 即時動態「畫出來了沒」：小工具擴充功能在畫即時動態時記下序號
+
+    struct DrawProbe: Codable {
+        var carPlaySeq = 0
+        var carPlayAt = Date.distantPast
+        var otherSeq = 0
+        var otherAt = Date.distantPast
+    }
+
+    private static var drawProbeURL: URL? { containerURL?.appendingPathComponent("drawProbe.json") }
+
+    /// 在即時動態畫面的 body 裡呼叫（side effect，只有寫一個小檔案）
+    @discardableResult
+    static func recordDraw(seq: Int, carPlay: Bool) -> Bool {
+        guard seq > 0, let url = drawProbeURL else { return false }
+        var p = loadDrawProbe() ?? DrawProbe()
+        if carPlay {
+            guard seq > p.carPlaySeq else { return false }
+            p.carPlaySeq = seq
+            p.carPlayAt = Date()
+        } else {
+            guard seq > p.otherSeq else { return false }
+            p.otherSeq = seq
+            p.otherAt = Date()
+        }
+        guard let data = try? JSONEncoder().encode(p) else { return false }
+        try? data.write(to: url, options: .atomic)
+        return true
+    }
+
+    static func loadDrawProbe() -> DrawProbe? {
+        guard let url = drawProbeURL, let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(DrawProbe.self, from: data)
+    }
+
+    static func resetDrawProbe() {
+        guard let url = drawProbeURL else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     static func saveWidgetStatus(_ s: WidgetStatus) {

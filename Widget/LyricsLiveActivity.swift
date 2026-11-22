@@ -32,6 +32,7 @@ struct LyricsLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(context.state.line).font(.headline).lineLimit(2)
+                            .contentTransition(.identity)
                         if !context.state.nextLine.isEmpty {
                             Text(context.state.nextLine).font(.caption)
                                 .foregroundStyle(.white.opacity(0.6)).lineLimit(1)
@@ -45,6 +46,7 @@ struct LyricsLiveActivity: Widget {
             } compactTrailing: {
                 Text(context.isStale ? "已停止" : context.state.line)
                     .font(.caption2).lineLimit(1).frame(maxWidth: 110)
+                    .contentTransition(.identity)
             } minimal: {
                 Image(systemName: "music.note").foregroundStyle(.green)
             }
@@ -60,6 +62,16 @@ struct LyricsActivityView: View {
     var isStale = false
 
     var body: some View {
+        // 診斷：記下 iOS 真的叫我們畫了哪一次更新（App 的診斷紀錄會比對）
+        let _ = SharedStore.recordDraw(seq: state.seq, carPlay: family == .small)
+        content
+            // CarPlay 在換句動畫進行中可能把新舊兩句疊在一起畫（Apple 論壇 thread 804483），
+            // 所以完全不要動畫，直接換字
+            .transaction { $0.animation = nil }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if isStale {
             // App 已經沒在更新（被系統關閉等），不要顯示過期的歌詞
             Label("LyricLane 已停止", systemImage: "pause.circle")
@@ -84,7 +96,7 @@ struct LyricsActivityView: View {
                 .minimumScaleFactor(0.4)
                 .allowsTightening(true)
                 .multilineTextAlignment(.leading)
-                .contentTransition(.opacity)
+                .contentTransition(.identity)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .layoutPriority(1) // 空間優先給目前這句
 

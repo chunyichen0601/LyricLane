@@ -42,6 +42,7 @@ final class SpotifyRemote: NSObject {
             appRemote?.delegate = nil
             appRemote?.disconnect()
             setStatus(.failed("連線逾時"))
+            DiagLog.log("直連：連線逾時（15 秒）")
         }
         // 失敗後至少隔 10 秒再試，避免一直重連
         guard Date().timeIntervalSince(lastAttempt) > 10 else { return }
@@ -53,6 +54,7 @@ final class SpotifyRemote: NSObject {
         remote.delegate = self
         appRemote = remote
         setStatus(.connecting)
+        DiagLog.log("直連：嘗試連線 Spotify")
         remote.connect()
     }
 
@@ -112,6 +114,7 @@ final class SpotifyRemote: NSObject {
 
     fileprivate func didConnect(_ remote: SPTAppRemote) {
         guard remote === appRemote else { return } // 過期的連線
+        DiagLog.log("直連：已連上")
         lastEventAt = Date() // 給第一次狀態回來的緩衝時間
         setStatus(.connected)
         remote.playerAPI?.delegate = self
@@ -127,7 +130,11 @@ final class SpotifyRemote: NSObject {
     fileprivate func didDrop(_ remote: SPTAppRemote, _ message: String) {
         // 以前沒有檢查是哪一條連線：舊連線晚到的「已中斷」會把新連線的
         // 5 秒對時計時器關掉，直連就會每 15 秒左右斷一次、反覆重連，歌詞一直被重新對時。
-        guard remote === appRemote else { return }
+        guard remote === appRemote else {
+            DiagLog.log("直連：忽略舊連線的通知（\(message)）")
+            return
+        }
+        DiagLog.log("直連：中斷（\(message)）")
         refreshTimer?.invalidate()
         refreshTimer = nil
         setStatus(.failed(message))

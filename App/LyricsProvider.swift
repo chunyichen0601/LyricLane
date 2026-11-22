@@ -81,6 +81,13 @@ final class LyricsProvider {
         let syncedLyrics: String?
     }
 
+    /// 這首歌的歌詞是不是已經在手機裡（記憶體或磁碟）
+    func hasCached(_ key: String) -> Bool {
+        if memory[key] != nil { return true }
+        let safe = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "x"
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(safe + ".json").path)
+    }
+
     /// 忘掉某首歌的歌詞（記憶體＋磁碟），下次重新抓
     func forget(_ key: String) {
         memory.removeValue(forKey: key)

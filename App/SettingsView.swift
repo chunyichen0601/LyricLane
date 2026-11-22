@@ -1,3 +1,4 @@
+import ActivityKit
 import AppIntents
 import SwiftUI
 
@@ -98,10 +99,37 @@ struct SettingsView: View {
                 }
             }
             Toggle("即時動態顯示下一句", isOn: $settings.carShowNext)
+            LabeledContent("更頻繁更新") {
+                if ActivityAuthorizationInfo().frequentPushesEnabled {
+                    Text("已開啟").foregroundStyle(Theme.accent)
+                } else {
+                    Button("未開啟，去設定") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .foregroundStyle(.orange)
+                }
+            }
+            Toggle(isOn: $settings.useLocationKeepAlive) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("用定位保持背景執行")
+                    Text("定位權限：\(LocationKeepAlive.describe(LocationKeepAlive.shared.authorization))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .onChange(of: settings.useLocationKeepAlive) { _, on in
+                on ? LocationKeepAlive.shared.start() : LocationKeepAlive.shared.stop()
+            }
         } header: {
             Text("即時動態")
         } footer: {
-            Text("不想佔用動態島就關閉「自動開啟」，只用 CarPlay 小工具即可。")
+            Text("""
+            不想佔用動態島就關閉「自動開啟」，只用 CarPlay 小工具即可。
+            「用定位保持背景執行」請保持開啟：iOS 不讓只在背景播音訊的 App 更新即時動態，\
+            有定位才行（跟導航 App 一樣）。只用低精度定位、不開 GPS，位置不會儲存或上傳。\
+            定位權限建議選「永遠」，CarPlay 自動化才能在背景啟動。
+            """)
         }
     }
 
@@ -277,6 +305,20 @@ struct AdvancedView: View {
             }
 
             Section {
+                if let url = DiagLog.fileURL {
+                    ShareLink(item: url) {
+                        Label("匯出診斷紀錄", systemImage: "square.and.arrow.up")
+                    }
+                }
+                NavigationLink("查看最近紀錄") { DiagLogView() }
+                Button("清除紀錄", role: .destructive) { DiagLog.clear() }
+            } header: {
+                Text("診斷紀錄")
+            } footer: {
+                Text("歌詞卡住時，記下大概的時間（或按一下 ↻ 重新同步，紀錄裡會留一筆當記號）。回家後按「匯出診斷紀錄」把檔案傳給 Claude。紀錄只存在手機裡，不含帳號資料。")
+            }
+
+            Section {
                 TextField("Client ID", text: $settings.clientID)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -325,5 +367,30 @@ struct AdvancedView: View {
             }
             .buttonStyle(.borderless)
         }
+    }
+}
+
+/// 在手機上直接看最近的診斷紀錄（最新的在最下面）
+struct DiagLogView: View {
+    @State private var text = ""
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                Text(text.isEmpty ? "還沒有紀錄" : text)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                Color.clear.frame(height: 1).id("bottom")
+            }
+            .onAppear {
+                text = DiagLog.tail(400)
+                DispatchQueue.main.async { proxy.scrollTo("bottom") }
+            }
+            .refreshable { text = DiagLog.tail(400) }
+        }
+        .navigationTitle("最近紀錄")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
