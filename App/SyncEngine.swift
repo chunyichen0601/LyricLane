@@ -454,11 +454,8 @@ final class SyncEngine: ObservableObject {
     }
 
     private func rebuildLines() {
-        guard AppSettings.shared.toTraditional else { lines = rawLines; return }
-        let toHant = StringTransform("Hans-Hant")
-        lines = rawLines.map {
-            LyricLine(time: $0.time, text: $0.text.applyingTransform(toHant, reverse: false) ?? $0.text)
-        }
+        // 歌詞一律顯示繁體：不管 LRCLIB 收的是簡體還是繁體（搜尋時繁簡互查找到的也一樣）
+        lines = rawLines.map { LyricLine(time: $0.time, text: LyricsMatcher.toTraditional($0.text)) }
     }
 
     /// 預抓 Spotify 播放佇列裡接下來幾首的歌詞（存進快取）。

@@ -46,11 +46,10 @@ struct SettingsView: View {
                     Image(systemName: "hare.fill").foregroundStyle(.secondary)
                 }
             }
-            Toggle("簡體轉繁體", isOn: $settings.toTraditional)
         } header: {
             Text("歌詞")
         } footer: {
-            Text("歌詞比歌聲慢就往兔子調，比歌聲快就往烏龜調。無線 CarPlay 的聲音本身有延遲，通常要往烏龜調一點。")
+            Text("歌詞比歌聲慢就往兔子調，比歌聲快就往烏龜調。無線 CarPlay 的聲音本身有延遲，通常要往烏龜調一點。歌詞一律顯示繁體中文。")
         }
     }
 

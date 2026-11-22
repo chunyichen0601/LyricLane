@@ -76,6 +76,8 @@ final class LyricsProvider {
     }()
 
     private struct Record: Decodable {
+        let trackName: String?
+        let artistName: String?
         let duration: Double?
         let instrumental: Bool?
         let syncedLyrics: String?
@@ -119,10 +121,16 @@ final class LyricsProvider {
         return lines
     }
 
+    /// 每首歌最多打幾次 LRCLIB（各種寫法排列組合很多，不能無限試）
+    private static let requestBudget = 16
+
     private func fetch(title: String, artist: String, album: String, durationMs: Int) async -> [LyricLine] {
         let dur = Double(durationMs) / 1000
+        var budget = Self.requestBudget
+        var tried = 0
 
         // 1. 精準比對（歌名＋歌手＋專輯＋長度）
+        budget -= 1; tried += 1
         if let r: Record = await get("api/get", [
             ("track_name", title), ("artist_name", artist),
             ("album_name", album), ("duration", String(Int(dur.rounded()))),
@@ -134,25 +142,59 @@ final class LyricsProvider {
             }
         }
 
-        // 2. 模糊搜尋，挑長度最接近的
+        // 2. 模糊搜尋：歌名 × 歌手的各種寫法（繁體、簡體、英文名／中文名別名）
         let cleaned = Self.clean(title)
-        let queries: [[(String, String)]] = [
-            [("track_name", cleaned), ("artist_name", artist)],
-            [("q", "\(cleaned) \(artist)")],
-            [("q", cleaned)],
-        ]
-        for q in queries {
-            if Task.isCancelled { return [] } // 已經跳到下一首，別再浪費請求
+        let titles = LyricsMatcher.titleVariants(cleaned)
+        let artists = LyricsMatcher.artistVariants(artist)
+        var queries: [[(String, String)]] = []
+        for a in artists {
+            for t in titles { queries.append([("track_name", t), ("artist_name", a)]) }
+        }
+        // 3. 最後只用歌名搜（這時一定要歌名、歌手或長度對得上才採用）
+        let titleOnly = titles.map { [("q", $0)] }
+
+        var seen = Set<String>()
+        for (i, q) in (queries + titleOnly).enumerated() {
+            if Task.isCancelled || budget <= 0 { break } // 已經跳到下一首，或試夠多次了
+            let sig = q.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
+            guard seen.insert(sig).inserted else { continue }
+            budget -= 1; tried += 1
             guard let results: [Record] = await get("api/search", q) else { continue }
-            let best = results
-                .filter { !($0.syncedLyrics ?? "").isEmpty }
-                .min { abs(($0.duration ?? 0) - dur) < abs(($1.duration ?? 0) - dur) }
-            if let best, let synced = best.syncedLyrics, abs((best.duration ?? dur) - dur) < 8 {
-                let l = LRCParser.parse(synced)
-                if !l.isEmpty { return l }
+            let strict = i >= queries.count
+            if let lines = pick(results, title: cleaned, artist: artist, duration: dur, strict: strict) {
+                if tried > 2 {
+                    DiagLog.log("歌詞：換寫法才找到（第 \(tried) 次查詢：\(q.map(\.1).joined(separator: " / "))）")
+                }
+                return lines
             }
         }
         return []
+    }
+
+    /// 從搜尋結果挑最像的：歌名相同 > 歌手相同（含別名、繁簡）> 長度最接近
+    private func pick(_ results: [Record], title: String, artist: String, duration: Double, strict: Bool) -> [LyricLine]? {
+        let wantTitle = LyricsMatcher.key(title)
+        struct Candidate { let titleOK: Bool; let artistOK: Bool; let diff: Double; let lrc: String }
+        let candidates: [Candidate] = results.compactMap { r in
+            guard let lrc = r.syncedLyrics, !lrc.isEmpty else { return nil }
+            let diff = duration > 0 ? abs((r.duration ?? duration) - duration) : 0
+            guard diff < 8 else { return nil }
+            let titleOK = LyricsMatcher.key(Self.clean(r.trackName ?? "")) == wantTitle
+            let artistOK = LyricsMatcher.sameArtist(r.artistName ?? "", artist)
+            // 只用歌名搜的結果容易抓錯同名歌：歌名要對，而且歌手對得上或長度差 3 秒內
+            if strict, !(titleOK && (artistOK || diff < 3)) { return nil }
+            // 有指定歌手的搜尋：歌名或歌手至少一個要對得上
+            if !strict, !(titleOK || artistOK) { return nil }
+            return Candidate(titleOK: titleOK, artistOK: artistOK, diff: diff, lrc: lrc)
+        }
+        let best = candidates.min { a, b in
+            if a.titleOK != b.titleOK { return a.titleOK }
+            if a.artistOK != b.artistOK { return a.artistOK }
+            return a.diff < b.diff
+        }
+        guard let best else { return nil }
+        let lines = LRCParser.parse(best.lrc)
+        return lines.isEmpty ? nil : lines
     }
 
     private func get<T: Decodable>(_ path: String, _ items: [(String, String)]) async -> T? {
