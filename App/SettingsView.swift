@@ -277,6 +277,20 @@ struct AdvancedView: View {
             }
 
             Section {
+                if let url = DiagLog.fileURL {
+                    ShareLink(item: url) {
+                        Label("匯出診斷紀錄", systemImage: "square.and.arrow.up")
+                    }
+                }
+                NavigationLink("查看最近紀錄") { DiagLogView() }
+                Button("清除紀錄", role: .destructive) { DiagLog.clear() }
+            } header: {
+                Text("診斷紀錄")
+            } footer: {
+                Text("歌詞卡住時，記下大概的時間（或按一下 ↻ 重新同步，紀錄裡會留一筆當記號）。回家後按「匯出診斷紀錄」把檔案傳給 Claude。紀錄只存在手機裡，不含帳號資料。")
+            }
+
+            Section {
                 TextField("Client ID", text: $settings.clientID)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -325,5 +339,30 @@ struct AdvancedView: View {
             }
             .buttonStyle(.borderless)
         }
+    }
+}
+
+/// 在手機上直接看最近的診斷紀錄（最新的在最下面）
+struct DiagLogView: View {
+    @State private var text = ""
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                Text(text.isEmpty ? "還沒有紀錄" : text)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                Color.clear.frame(height: 1).id("bottom")
+            }
+            .onAppear {
+                text = DiagLog.tail(400)
+                DispatchQueue.main.async { proxy.scrollTo("bottom") }
+            }
+            .refreshable { text = DiagLog.tail(400) }
+        }
+        .navigationTitle("最近紀錄")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

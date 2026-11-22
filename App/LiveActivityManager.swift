@@ -24,6 +24,7 @@ final class LiveActivityManager {
     private var sendStartedAt = Date.distantPast
     /// 每開一個新的送出迴圈就 +1；舊的迴圈發現自己過期了就自行結束
     private var senderGeneration = 0
+    private var loggedInactive = false
     /// 單次 update 超過這個時間還沒回來，就當作卡住，不再等它
     private static let sendTimeout: TimeInterval = 1.5
 
@@ -48,11 +49,19 @@ final class LiveActivityManager {
         )
         lastState = state
         lastSent = Date()
+        DiagLog.log("即時動態：已開啟")
     }
 
     /// 在本機直接更新（不經過推播，所以沒有推播的次數限制與網路延遲）
     func update(_ state: State) {
-        guard let activity, activity.activityState == .active else { return }
+        guard let activity, activity.activityState == .active else {
+            if let activity, !loggedInactive {
+                loggedInactive = true
+                DiagLog.log("即時動態：已不在顯示（狀態 \(String(describing: activity.activityState))），之後的更新都送不出去")
+            }
+            return
+        }
+        loggedInactive = false
         // 內容沒變就不送，但每分鐘送一次心跳，延後「已停止」的時間
         guard state != lastState || Date().timeIntervalSince(lastSent) > Self.heartbeat else { return }
         lastState = state
@@ -65,6 +74,9 @@ final class LiveActivityManager {
         // 以前一卡住 sending 就永遠是 true，之後所有換句都被擋住（歌詞停在某一句）。
         // 超過 sendTimeout 就放棄等待，另開一個送出迴圈。
         if sending, Date().timeIntervalSince(sendStartedAt) < Self.sendTimeout { return }
+        if sending {
+            DiagLog.log("即時動態：上一個更新卡住超過 \(Self.sendTimeout) 秒，不等了")
+        }
         startSender(activity)
     }
 
@@ -75,8 +87,13 @@ final class LiveActivityManager {
         Task { [weak self] in
             while let me = self, me.senderGeneration == generation, let next = me.pending {
                 me.pending = nil
-                me.sendStartedAt = Date()
+                let t0 = Date()
+                me.sendStartedAt = t0
                 await activity.update(me.content(next))
+                let took = Date().timeIntervalSince(t0)
+                if took > 0.5 {
+                    DiagLog.log(String(format: "即時動態：一次更新花了 %.1f 秒（系統在拖延）", took))
+                }
             }
             // 只有「目前這一代」的迴圈可以把 sending 關掉（舊的、卡住的迴圈回來時不要動它）
             if let me = self, me.senderGeneration == generation { me.sending = false }
@@ -84,6 +101,7 @@ final class LiveActivityManager {
     }
 
     func end() {
+        DiagLog.log("即時動態：關閉")
         let all = Activity<LyricsActivityAttributes>.activities
         activity = nil
         lastState = nil

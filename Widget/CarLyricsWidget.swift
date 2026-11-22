@@ -90,6 +90,8 @@ struct CarLyricsProvider: TimelineProvider {
         }
         // 診斷：記下系統真的叫小工具重算的時間，App 的「進階與診斷」看得到
         SharedStore.saveWidgetStatus(.init(lastTimelineAt: now, title: np?.title ?? "", entries: entries.count))
+        let span = entries.last.map { Int($0.date.timeIntervalSince(now)) } ?? 0
+        DiagLog.log("小工具重算：\(np?.title ?? "（沒有資料）")，\(entries.count) 個時間點，涵蓋 \(span) 秒，尺寸 \(context.family)")
         completion(Timeline(entries: entries, policy: policy))
     }
 
