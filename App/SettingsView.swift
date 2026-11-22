@@ -1,3 +1,4 @@
+import ActivityKit
 import AppIntents
 import SwiftUI
 
@@ -98,6 +99,18 @@ struct SettingsView: View {
                 }
             }
             Toggle("即時動態顯示下一句", isOn: $settings.carShowNext)
+            LabeledContent("更頻繁更新") {
+                if ActivityAuthorizationInfo().frequentPushesEnabled {
+                    Text("已開啟").foregroundStyle(Theme.accent)
+                } else {
+                    Button("未開啟，去設定") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .foregroundStyle(.orange)
+                }
+            }
             Toggle(isOn: $settings.useLocationKeepAlive) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("用定位保持背景執行")

@@ -1,3 +1,4 @@
+import ActivityKit
 import SwiftUI
 
 /// 根畫面：沒登入 → 引導畫面；登入後 → 歌詞主畫面
@@ -40,6 +41,44 @@ enum Theme {
 
 // MARK: - 主畫面
 
+/// 「更頻繁更新」沒開時的提醒：沒開的話 App 在背景約 30 秒後即時動態就不再更新
+struct FrequentUpdatesBanner: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var enabled = ActivityAuthorizationInfo().frequentPushesEnabled
+
+    var body: some View {
+        Group {
+            if !enabled {
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("請開啟「更頻繁更新」").font(.subheadline.bold())
+                            Text("沒開的話，動態島和 CarPlay 歌詞會在背景約 30 秒後停住。點這裡 → 即時動態 → 更頻繁更新")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(10)
+                    .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
+        }
+        // 從設定頁回來時重新檢查
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { enabled = ActivityAuthorizationInfo().frequentPushesEnabled }
+        }
+    }
+}
+
 struct NowPlayingView: View {
     @EnvironmentObject private var auth: SpotifyAuth
     @EnvironmentObject private var engine: SyncEngine
@@ -49,6 +88,7 @@ struct NowPlayingView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 header
+                FrequentUpdatesBanner()
                 LyricsScroller()
                 bottomBar
             }

@@ -127,13 +127,16 @@ struct CarLyricsProvider: TimelineProvider {
                                   offsetMs: Int((np.offset * 1000).rounded()))
         }
 
+        // 歌詞提早量 + CarPlay 額外提早（CarPlay 換時間點本來就會晚一點）
+        let shift = np.offset + (np.lead ?? 0)
+
         func index(at pos: Double) -> Int {
             np.lines.lastIndex(where: { $0.time <= pos }) ?? -1
         }
 
         // 暫停或沒有歌詞：只顯示一個畫面
         guard np.isPlaying, !np.lines.isEmpty else {
-            return [make(now, index(at: np.pausedPosition + np.offset))]
+            return [make(now, index(at: np.pausedPosition + shift))]
         }
 
         // 歌曲結束之後：不要一直停在最後一句，改顯示「等待下一首」
@@ -147,12 +150,12 @@ struct CarLyricsProvider: TimelineProvider {
                                    fontSize: waiting.fontSize, offsetMs: waiting.offsetMs)]
         }
 
-        let pos = now.timeIntervalSince(np.trackStart) + np.offset
+        let pos = now.timeIntervalSince(np.trackStart) + shift
         let current = index(at: pos)
         var result = [make(now, current)]
         var i = current + 1
         while i < np.lines.count, result.count < limit {
-            let date = np.trackStart.addingTimeInterval(np.lines[i].time - np.offset)
+            let date = np.trackStart.addingTimeInterval(np.lines[i].time - shift)
             if np.duration > 0, date >= songEnd { break }
             result.append(make(date, i))
             i += 1

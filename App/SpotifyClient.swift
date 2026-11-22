@@ -89,6 +89,46 @@ final class SpotifyClient {
         )
     }
 
+    /// 接下來要播的歌（Spotify 播放佇列），給「預抓歌詞」用。只回傳歌曲，不含 Podcast。
+    func queue(limit: Int) async throws -> [PlaybackSnapshot] {
+        let token = try await auth.validToken()
+        var req = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/queue")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await session.data(for: req)
+        let http = resp as? HTTPURLResponse
+        switch http?.statusCode ?? 0 {
+        case 200: break
+        case 204: return []
+        case 401:
+            auth.invalidate()
+            throw SpotifyError.unauthorized
+        case 429:
+            throw SpotifyError.rateLimited(Int(http?.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 5)
+        case let code:
+            throw SpotifyError.http(code)
+        }
+        let r = try JSONDecoder().decode(Queue.self, from: data)
+        var seen = Set<String>()
+        return r.queue.compactMap { item -> PlaybackSnapshot? in
+            guard let artists = item.artists, !artists.isEmpty else { return nil } // Podcast 沒有歌手
+            let id = item.uri ?? item.id ?? item.name
+            guard seen.insert(id).inserted else { return nil } // 佇列裡同一首重複出現只抓一次
+            return PlaybackSnapshot(
+                trackID: id, title: item.name,
+                artist: artists.map(\.name).joined(separator: ", "),
+                primaryArtist: artists[0].name,
+                album: item.album?.name ?? "",
+                durationMs: item.duration_ms, progressMs: 0, isPlaying: false, sampledAt: Date()
+            )
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
+    private struct Queue: Decodable {
+        let queue: [CurrentlyPlaying.Item]
+    }
+
     private struct CurrentlyPlaying: Decodable {
         let is_playing: Bool
         let progress_ms: Int?

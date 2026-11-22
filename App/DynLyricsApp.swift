@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // 開車途中出現這行 = App 之前被系統結束，又被叫起來
+        SharedStore.resetDrawProbe() // 序號每次啟動從 1 開始，舊紀錄清掉才比得準
         DiagLog.log("===== App 啟動（版本 \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?")）=====")
         return true
     }

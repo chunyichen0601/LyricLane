@@ -26,6 +26,16 @@ final class LiveActivityManager {
     /// 每開一個新的送出迴圈就 +1；舊的迴圈發現自己過期了就自行結束
     private var senderGeneration = 0
     private var loggedInactive = false
+
+    // 診斷：送出的序號、iOS 回報已套用的序號
+    private(set) var sentSeq = 0
+    private(set) var appliedSeq = 0
+    private var reportedLag = false
+    private var watchers: [Task<Void, Never>] = []
+    private var watchedID: String?
+
+    /// 即時動態被使用者滑掉、或到了 iOS 的時間上限（約 8 小時）而結束時通知
+    var onEnded: (() -> Void)?
     /// 單次 update 超過這個時間還沒回來，就當作卡住，不再等它
     private static let sendTimeout: TimeInterval = 1.5
 
@@ -43,11 +53,16 @@ final class LiveActivityManager {
             return
         }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw ActivityError.disabled }
-        activity = try Activity.request(
+        sentSeq += 1
+        var first = state
+        first.seq = sentSeq
+        let created = try Activity.request(
             attributes: LyricsActivityAttributes(),
-            content: content(state),
+            content: content(first),
             pushType: nil
         )
+        activity = created
+        watch(created)
         lastState = state
         lastSent = Date()
         DiagLog.log("即時動態：已開啟")
@@ -93,9 +108,11 @@ final class LiveActivityManager {
         let generation = senderGeneration
         sending = true
         Task { [weak self] in
-            while let me = self, me.senderGeneration == generation, let next = me.pending {
+            while let me = self, me.senderGeneration == generation, var next = me.pending {
                 let stale = me.pendingStale
                 me.pending = nil
+                me.sentSeq += 1
+                next.seq = me.sentSeq
                 let t0 = Date()
                 me.sendStartedAt = t0
                 await activity.update(me.content(next, staleDate: stale))
@@ -152,6 +169,56 @@ final class LiveActivityManager {
     private func adoptExisting() {
         if activity?.activityState != .active {
             activity = Activity<LyricsActivityAttributes>.activities.first { $0.activityState == .active }
+            if let activity { watch(activity) }
         }
+    }
+
+    /// 盯著即時動態：iOS 套用了哪一次更新、什麼時候結束
+    private func watch(_ a: Activity<LyricsActivityAttributes>) {
+        guard watchedID != a.id else { return }
+        watchedID = a.id
+        appliedSeq = 0
+        reportedLag = false
+        watchers.forEach { $0.cancel() }
+        watchers = [
+            Task { [weak self] in
+                for await state in a.activityStateUpdates {
+                    guard let self else { return }
+                    DiagLog.log("即時動態：狀態變成 \(String(describing: state))")
+                    if state == .ended || state == .dismissed {
+                        if self.activity?.id == a.id {
+                            self.activity = nil
+                            self.lastState = nil
+                        }
+                        self.onEnded?()
+                    }
+                }
+            },
+            Task { [weak self] in
+                for await content in a.contentUpdates {
+                    guard let self else { return }
+                    self.appliedSeq = max(self.appliedSeq, content.state.seq)
+                    let behind = self.sentSeq - self.appliedSeq
+                    if behind > 5, !self.reportedLag {
+                        self.reportedLag = true
+                        DiagLog.log("⚠️ 即時動態：iOS 沒有套用更新（送出 #\(self.sentSeq)，套用到 #\(self.appliedSeq)）")
+                    } else if behind <= 1, self.reportedLag {
+                        self.reportedLag = false
+                        DiagLog.log("即時動態：iOS 恢復套用更新（#\(self.appliedSeq)）")
+                    }
+                }
+            },
+        ]
+    }
+
+    /// 給診斷紀錄的摘要：送出／iOS 套用／實際畫出（CarPlay 與其他）
+    func diagSummary() -> String {
+        let p = SharedStore.loadDrawProbe()
+        func ago(_ d: Date?) -> String {
+            guard let d, d > .distantPast else { return "從未" }
+            return "\(Int(Date().timeIntervalSince(d))) 秒前"
+        }
+        return "即時動態：送出 #\(sentSeq)、iOS 套用 #\(appliedSeq)、CarPlay 畫出 #\(p?.carPlaySeq ?? 0)（\(ago(p?.carPlayAt))）、"
+            + "鎖定畫面/動態島畫出 #\(p?.otherSeq ?? 0)（\(ago(p?.otherAt))）、狀態 \(activity.map { String(describing: $0.activityState) } ?? "沒有")"
     }
 }
