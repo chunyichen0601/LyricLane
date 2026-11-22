@@ -46,6 +46,10 @@ final class SyncEngine: ObservableObject {
     private var anchorDate = Date()
     private var playing = false
     private var behindStreak = 0
+    private var previousTrackID: String?
+    private var trackChangedAt = Date.distantPast
+    private var lastTrackChangeTrusted = false
+    private var lineTimerDeadline = Date.distantFuture
 
     private var pollTask: Task<Void, Never>?
     private var lyricsTask: Task<Void, Never>?
@@ -80,6 +84,7 @@ final class SyncEngine: ObservableObject {
 
     func start() {
         guard pollTask == nil else { return }
+        DiagLog.log("開始背景同步")
         KeepAlive.shared.start()
         isRunning = true
         pollTask = Task { [weak self] in
@@ -91,6 +96,7 @@ final class SyncEngine: ObservableObject {
     }
 
     func stop() {
+        DiagLog.log("停止背景同步")
         pollTask?.cancel()
         pollTask = nil
         lineTimer?.cancel()
@@ -136,6 +142,7 @@ final class SyncEngine: ObservableObject {
     /// 重新同步：歌詞卡住、不同步、抓錯歌詞時用。整套流程重來，不只是刷新畫面。
     func resync() {
         guard auth.isLoggedIn, !isResyncing else { return }
+        DiagLog.log("手動重新同步")
         resyncPhase = .working
         status = "重新同步中…"
         let keepActivity = activityRunning || activity.isActive
@@ -242,6 +249,7 @@ final class SyncEngine: ObservableObject {
             }
             // 連著但 15 秒沒收到任何狀態（例如連續跳歌後 Spotify 那邊卡住）：
             // 自動斷開，這一輪先改用網路模式，下一輪再重新直連——不用使用者手動重開 App
+            DiagLog.log("直連：15 秒沒收到狀態，斷開改用網路")
             remote.disconnect()
         }
         await tryConnectRemote()
@@ -263,9 +271,11 @@ final class SyncEngine: ObservableObject {
             return max(0.5, min(3, remaining + 0.3))
         } catch SpotifyError.rateLimited(let seconds) {
             status = "Spotify 限流，\(seconds) 秒後重試"
+            DiagLog.log(status)
             return Double(max(seconds, 1))
         } catch {
             status = "連線錯誤：\(error.localizedDescription)"
+            DiagLog.log(status)
             return 5
         }
     }
@@ -296,6 +306,7 @@ final class SyncEngine: ObservableObject {
     }
 
     private func handleIdle() {
+        if status != "目前沒有播放" { DiagLog.log("Spotify 目前沒有播放") }
         status = "目前沒有播放"
         if playing {
             anchorProgress = position()
@@ -314,6 +325,17 @@ final class SyncEngine: ObservableObject {
         latencyMs = Int((snap.latency * 1000).rounded())
 
         if snap.trackID != track?.trackID {
+            // 網路資料常常落後好幾秒：直連剛告訴我們換歌了，Web API 卻還在回報上一首。
+            // 以前會把它當成「又換回上一首」，歌詞被清掉重抓，連續跳歌時就一路跟不上。
+            if !trusted, lastTrackChangeTrusted, snap.trackID == previousTrackID,
+               Date().timeIntervalSince(trackChangedAt) < 10 {
+                DiagLog.log("忽略網路回報的舊資料（還是上一首：\(snap.title)）")
+                return
+            }
+            previousTrackID = track?.trackID
+            trackChangedAt = Date()
+            lastTrackChangeTrusted = trusted
+            DiagLog.log("換歌：\(snap.title) - \(snap.artist)（\(trusted ? "直連" : "網路")，位置 \(String(format: "%.1f", progress)) 秒\(snap.isPlaying ? "" : "，暫停中")）")
             track = snap
             setAnchor(progress, snap.sampledAt, snap.isPlaying)
             behindStreak = 0
@@ -328,6 +350,7 @@ final class SyncEngine: ObservableObject {
         }
 
         track = snap
+        let playingBefore = playing
         let drift = progress - position(at: snap.sampledAt)
         lastDriftMs = Int((drift * 1000).rounded())
         var reanchored = false
@@ -358,6 +381,9 @@ final class SyncEngine: ObservableObject {
             behindStreak = 0 // 小幅落後：視為伺服器的舊資料，忽略
         }
 
+        if reanchored, abs(drift) > 0.3 || snap.isPlaying != playingBefore {
+            DiagLog.log("重新對時：誤差 \(lastDriftMs) ms（\(trusted ? "直連" : "網路")\(snap.isPlaying ? "" : "，暫停")）")
+        }
         reschedule()
         if reanchored { publishWidget() }
     }
@@ -377,8 +403,11 @@ final class SyncEngine: ObservableObject {
             // 防抖：停在同一首 0.35 秒才開始抓歌詞；連續跳歌時中間的歌都不會送出請求
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard let self, !Task.isCancelled else { return }
+            let t0 = Date()
             let result = await self.provider.lyrics(for: snap)
             guard !Task.isCancelled, self.track?.trackID == snap.trackID else { return }
+            DiagLog.log(result.isEmpty ? "找不到歌詞：\(snap.title)"
+                        : "歌詞載入：\(result.count) 句（\(Int(Date().timeIntervalSince(t0) * 1000)) ms）")
             self.rawLines = result
             self.lyricsStatus = result.isEmpty ? "找不到同步歌詞" : ""
             self.rebuildLines()
@@ -413,15 +442,27 @@ final class SyncEngine: ObservableObject {
 
         let pos = position() + AppSettings.shared.offsetMs / 1000
         let idx = index(for: pos)
-        if idx != currentIndex { currentIndex = idx }
+        if idx != currentIndex {
+            currentIndex = idx
+            // 拿來跟畫面對照：這裡有記但動態島沒動 = iOS 沒顯示更新；這裡也停了 = App 被暫停
+            if idx >= 0 { DiagLog.log("第 \(idx + 1)/\(lines.count) 句") }
+        }
         activity.update(makeState())
 
         guard playing, idx + 1 < lines.count else { return }
         let wait = max(0.005, lines[idx + 1].time - pos)
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
         timer.schedule(deadline: .now() + wait, leeway: .milliseconds(2))
+        lineTimerDeadline = Date().addingTimeInterval(wait)
         timer.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.reschedule() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let late = Date().timeIntervalSince(self.lineTimerDeadline)
+                if late > 1.5 {
+                    DiagLog.log(String(format: "⚠️ 換句計時器晚了 %.1f 秒（App 被系統暫停過）", late))
+                }
+                self.reschedule()
+            }
         }
         timer.resume()
         lineTimer = timer
@@ -485,6 +526,7 @@ final class SyncEngine: ObservableObject {
         lastWidgetTrackStart = trackStart
         lastWidgetReloadAt = Date()
         widgetReloads += 1
+        DiagLog.log("通知小工具刷新：\(track?.title ?? "沒有播放")（\(lines.count) 句，第 \(widgetReloads) 次）")
 
         SharedStore.save(.init(
             title: track?.title ?? "",

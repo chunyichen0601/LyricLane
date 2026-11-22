@@ -50,16 +50,16 @@ enum SharedStore {
         return defaultGroup
     }()
 
-    static var isAvailable: Bool { container != nil }
+    static var isAvailable: Bool { containerURL != nil }
 
-    private static var container: URL? {
+    static var containerURL: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID)
     }
 
     // 用「檔案」而不是 UserDefaults 交換資料：
     // UserDefaults 跨程式（App ↔ 小工具）可能讀到快取的舊值，檔案每次讀都是最新的。
-    private static var nowPlayingURL: URL? { container?.appendingPathComponent("nowPlaying.json") }
-    private static var widgetStatusURL: URL? { container?.appendingPathComponent("widgetStatus.json") }
+    private static var nowPlayingURL: URL? { containerURL?.appendingPathComponent("nowPlaying.json") }
+    private static var widgetStatusURL: URL? { containerURL?.appendingPathComponent("widgetStatus.json") }
 
     static func save(_ value: NowPlaying) {
         guard let url = nowPlayingURL, let data = try? JSONEncoder().encode(value) else { return }

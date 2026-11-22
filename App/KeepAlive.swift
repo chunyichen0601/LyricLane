@@ -15,26 +15,32 @@ final class KeepAlive {
         observers.append(nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, self.isRunning,
                   let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
-            self.restart()
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            if type == .began {
+                DiagLog.log("背景音訊被打斷（Siri／導航語音／電話？）")
+                return
+            }
+            self.restart(reason: "打斷結束")
         })
         observers.append(nc.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.isRunning else { return }
-            self.restart() // 例如接上 / 拔掉 CarPlay、藍牙切換
+            self.restart(reason: "音訊裝置變更") // 例如接上 / 拔掉 CarPlay、藍牙切換
         })
         observers.append(nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.isRunning else { return }
-            self.restart()
+            self.restart(reason: "系統音訊服務重設")
         })
     }
 
     func start() {
         guard !isRunning else { return }
         isRunning = true
+        DiagLog.log("背景音訊：啟動")
         startEngine()
     }
 
     func stop() {
+        DiagLog.log("背景音訊：停止")
         isRunning = false
         teardown()
         try? AVAudioSession.sharedInstance().setActive(false)
@@ -45,11 +51,12 @@ final class KeepAlive {
     /// 沒收到的話無聲音訊就一直停著，App 幾十秒後被暫停，動態島的歌詞就卡在那一句。
     func ensureRunning() {
         guard isRunning, engine?.isRunning != true else { return }
-        restart()
+        restart(reason: "看門狗發現背景音訊停了")
     }
 
     /// 重新建立背景音訊（重新同步時也會用到）
-    func restart() {
+    func restart(reason: String = "重新同步") {
+        DiagLog.log("背景音訊：重新啟動（\(reason)）")
         isRunning = true
         teardown()
         startEngine()
@@ -86,7 +93,7 @@ final class KeepAlive {
             self.engine = engine
             self.player = player
         } catch {
-            print("KeepAlive 啟動失敗：\(error)")
+            DiagLog.log("背景音訊啟動失敗：\(error.localizedDescription)，5 秒後重試")
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
                 guard let self, self.isRunning, self.engine == nil else { return }
                 self.startEngine()
