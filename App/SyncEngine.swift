@@ -106,14 +106,30 @@ final class SyncEngine: ObservableObject {
     func start() {
         guard pollTask == nil else { return }
         DiagLog.log("開始背景同步")
-        KeepAlive.shared.start()
         LocationKeepAlive.shared.start()
+        updateKeepAlive()
         isRunning = true
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let delay = await self?.pollOnce() else { return }
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
+        }
+    }
+
+    /// 背景保活二選一，不要兩個一起開（省電、降溫）：
+    /// - 定位保活在跑 → 關掉無聲音訊。即時動態在背景能更新靠的是定位，音訊只是白白讓 CPU 一直算靜音
+    /// - 沒有定位（沒給權限或關掉開關）→ 才用無聲音訊撐著，並由看門狗確認它還在
+    private func updateKeepAlive() {
+        if LocationKeepAlive.shared.isUpdating {
+            if KeepAlive.shared.isRunning {
+                DiagLog.log("定位保活已在跑，關掉無聲音訊（省電）")
+                KeepAlive.shared.stop()
+            }
+        } else if KeepAlive.shared.isRunning {
+            KeepAlive.shared.ensureRunning()
+        } else {
+            KeepAlive.shared.start()
         }
     }
 
@@ -200,7 +216,7 @@ final class SyncEngine: ObservableObject {
         setAnchor(0, Date(), false)
 
         // 4. 重建背景執行，立刻重新抓目前播放的歌（第一輪馬上執行，不用等）
-        KeepAlive.shared.restart()
+        if KeepAlive.shared.isRunning { KeepAlive.shared.restart() }
         isRunning = false
         start()
 
@@ -264,8 +280,8 @@ final class SyncEngine: ObservableObject {
 
     /// 回傳下次輪詢前要等幾秒
     private func pollOnce() async -> Double {
-        KeepAlive.shared.ensureRunning() // 每輪（最多 5 秒）檢查一次背景音訊還在不在
         LocationKeepAlive.shared.ensureRunning()
+        updateKeepAlive() // 每輪（最多 5 秒）檢查一次：該用哪一種保活、有沒有在跑
         if activityRunning, Date().timeIntervalSince(lastDiagSummaryAt) > 60 {
             lastDiagSummaryAt = Date()
             DiagLog.log(activity.diagSummary())

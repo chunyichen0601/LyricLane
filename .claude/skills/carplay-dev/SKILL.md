@@ -16,7 +16,7 @@ LyricLane **沒有 CarPlay App 畫面**（那要 Apple 核准的 `com.apple.deve
 
 ## 鐵則（違反就會「播兩句就卡住」）
 
-1. **背景不能只靠音訊。** iOS 會擋「背景只在播音訊」的 App 更新即時動態（liveactivitiesd：`Process is only playing background media so is forbidden to update activity`）。一定要同時有 `LocationKeepAlive`（3 km 低精度、`pausesLocationUpdatesAutomatically = false`、`.automotiveNavigation`）。`UIBackgroundModes` 必須有 `location`。
+1. **背景不能只靠音訊。** iOS 會擋「背景只在播音訊」的 App 更新即時動態（liveactivitiesd：`Process is only playing background media so is forbidden to update activity`）。靠的是 `LocationKeepAlive`（3 km 低精度、`pausesLocationUpdatesAutomatically = false`、`.automotiveNavigation`），`UIBackgroundModes` 必須有 `location`。**定位在跑時不要再開無聲音訊**（`SyncEngine.updateKeepAlive()` 二選一）：兩個一起開只會多耗電、手機發燙；無聲音訊只在沒有定位權限時當備案。背景音訊重啟有 10 秒節流，避免裝置變更通知造成重啟循環。
 2. **使用者要開「更頻繁更新」**（設定 › LyricLane › 即時動態）。沒開背景約 30 秒就停。`ActivityAuthorizationInfo().frequentPushesEnabled` 檢查，主畫面有 `FrequentUpdatesBanner` 提醒，不要拿掉。
 3. **App 在背景時不能開新的即時動態**（`Activity.request` 會失敗；只有 `LiveActivityIntent` 的 `perform()` 例外）。所以：整趟只用同一個 activity，換歌只 update；重新同步用 `forceRefresh`，**絕對不要 end 再 request**。
 4. **即時動態不要動畫。** CarPlay 換句動畫中會把新舊兩句疊著畫（Apple 論壇 thread 804483）。保持 `.contentTransition(.identity)` 和 `.transaction { $0.animation = nil }`。
