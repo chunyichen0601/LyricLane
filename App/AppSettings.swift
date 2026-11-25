@@ -11,6 +11,7 @@ final class AppSettings: ObservableObject {
     @Published var offsetMs: Double {
         didSet { UserDefaults.standard.set(offsetMs, forKey: "offsetMs") }
     }
+    /// 已不使用（歌詞一律轉繁體），保留避免舊設定讀取出錯
     @Published var toTraditional: Bool {
         didSet { UserDefaults.standard.set(toTraditional, forKey: "toTraditional") }
     }

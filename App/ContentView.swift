@@ -18,7 +18,6 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
         .onChange(of: settings.offsetMs) { engine.settingsChanged() }
-        .onChange(of: settings.toTraditional) { engine.settingsChanged() }
         .onChange(of: settings.carFontSize) { engine.settingsChanged() }
         .onChange(of: settings.carShowNext) { engine.settingsChanged() }
         .onChange(of: settings.useAppRemote) {

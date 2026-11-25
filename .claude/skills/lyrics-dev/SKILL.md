@@ -43,11 +43,14 @@ Spotify Web API（/me/player/currently-playing）┴─▶ SyncEngine.ingest()
 ## 歌詞：搜尋與解析（`App/LyricsProvider.swift`）
 
 - 來源：LRCLIB（免費、免金鑰）。User-Agent 不要放個資。
-- 順序：`/api/get` 精準比對（歌名＋歌手＋專輯＋長度）→ `/api/search` 模糊搜尋，挑長度最接近且差 < 8 秒的。
+- 順序：`/api/get` 精準比對（歌名＋歌手＋專輯＋長度）→ `/api/search` 用「歌名寫法 × 歌手寫法」排列組合搜尋 → 最後只用歌名搜。每首最多 16 次請求（`requestBudget`）。
+- **繁簡互查＋歌手別名**（`App/LyricsMatcher.swift`）：歌名試原樣／繁體／簡體／標點換空白；歌手試原名、別名表（例：Jay Chou ↔ 周杰倫）、繁簡版本。別名表用繁體寫，比對用 `key()`（小寫＋轉簡體＋去標點），所以繁簡都認得。新增別名就在 `artistGroups` 加一行。
+- 挑結果（`pick`）：歌名相同 > 歌手相同（含別名）> 長度最接近，長度差 < 8 秒；只用歌名搜的結果要「歌名對＋（歌手對或長度差 < 3 秒）」才採用，避免抓到同名歌。
+- 換寫法才找到時，診斷紀錄會記「歌詞：換寫法才找到」。
 - `clean()` 去掉「 - Remastered」「(feat. …)」等後綴。
 - LRC 解析（`LRCParser.parse`）：支援 `[offset:]`、一行多個時間標、去掉逐字 `<mm:ss.xx>`；排序後**同時間的多行（原文＋翻譯）合併成一句**。
 - 快取：記憶體＋`Caches/lyrics/<trackURI>.json`。**只快取找到的**；網路失敗或被取消（跳歌）不能記成「找不到」。`forget()` 給重新同步用。
-- 簡轉繁：`StringTransform("Hans-Hant")`，在 `rebuildLines()` 做（顯示時轉，快取存原文）。
+- **歌詞一律顯示繁體**：`LyricsMatcher.toTraditional`（ICU `Hans-Hant`，逐字轉換，不會換成台灣用語），在 `rebuildLines()` 做（顯示時轉，快取存原文）。設定裡已沒有開關。
 - 防抖：停在同一首 0.35 秒才抓歌詞，連續跳歌時中間的歌不送請求。
 
 ### 預抓（`prefetchUpcoming`）
@@ -58,7 +61,6 @@ Spotify Web API（/me/player/currently-playing）┴─▶ SyncEngine.ingest()
 
 ### 想提升命中率可以參考（還沒做）
 
-- 沿途 CarPlayLyrics：歌手別名表、繁↔簡互查、去標點標題的排列組合搜尋。
 - DriveVerse：版本詞過濾（live／伴奏／翻唱／remaster），長度差 3 秒內，酷狗／網易雲當中文歌補充來源（注意授權，只限自用）。
 - Spotify 公開 API **沒有歌詞**；它 App 內的歌詞是 Musixmatch 的非公開介面，不要用。
 
