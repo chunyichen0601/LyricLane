@@ -9,6 +9,9 @@ final class KeepAlive {
     private var player: AVAudioPlayerNode?
     private var observers: [NSObjectProtocol] = []
     private(set) var isRunning = false
+    /// 上次重新啟動的時間：避免「音訊裝置變更 → 重啟 → 又觸發變更」的循環一直燒 CPU
+    private var lastRestart = Date.distantPast
+    private static let minRestartInterval: TimeInterval = 10
 
     private init() {
         let nc = NotificationCenter.default
@@ -56,6 +59,9 @@ final class KeepAlive {
 
     /// 重新建立背景音訊（重新同步時也會用到）
     func restart(reason: String = "重新同步") {
+        // 10 秒內最多重啟一次（CarPlay、藍牙切換時系統會連發好幾個通知）
+        guard Date().timeIntervalSince(lastRestart) > Self.minRestartInterval else { return }
+        lastRestart = Date()
         DiagLog.log("背景音訊：重新啟動（\(reason)）")
         isRunning = true
         teardown()
